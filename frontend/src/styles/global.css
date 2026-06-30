@@ -1,0 +1,134 @@
+/* ============================================================
+   Lumina — design system
+   Dark, cinematic, glassmorphic. Accent: electric violet.
+   ============================================================ */
+
+:root {
+  --bg-0: #07070c;
+  --bg-1: #0c0c16;
+  --bg-2: #11111f;
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-2: rgba(255, 255, 255, 0.06);
+  --surface-hover: rgba(255, 255, 255, 0.09);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --text-0: #f4f4fa;
+  --text-1: #b9b9cc;
+  --text-2: #7a7a90;
+
+  --accent: #7c5cff;
+  --accent-2: #4ad6ff;
+  --accent-grad: linear-gradient(135deg, #7c5cff 0%, #4ad6ff 100%);
+  --accent-soft: rgba(124, 92, 255, 0.14);
+  --accent-glow: 0 0 40px rgba(124, 92, 255, 0.35);
+
+  --success: #3ddc97;
+  --danger: #ff5d73;
+  --warn: #ffb454;
+
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 22px;
+  --shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.6);
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root { height: 100%; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg-0);
+  color: var(--text-0);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Ambient animated backdrop */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(900px 600px at 12% -10%, rgba(124, 92, 255, 0.18), transparent 60%),
+    radial-gradient(800px 600px at 100% 0%, rgba(74, 214, 255, 0.12), transparent 55%),
+    radial-gradient(700px 700px at 50% 120%, rgba(124, 92, 255, 0.1), transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input, select { font-family: inherit; }
+
+::-webkit-scrollbar { height: 10px; width: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ---------- shared atoms ---------- */
+.app-shell { position: relative; z-index: 1; height: 100vh; display: flex; flex-direction: column; }
+
+.glass {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  padding: 12px 20px; border-radius: var(--radius);
+  font-size: 14px; font-weight: 600; letter-spacing: 0.2px;
+  transition: transform .15s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-0);
+  white-space: nowrap;
+}
+.btn:hover { background: var(--surface-hover); transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+
+.btn-primary {
+  background: var(--accent-grad);
+  border: none;
+  color: #fff;
+  box-shadow: 0 10px 30px -8px rgba(124, 92, 255, 0.6);
+}
+.btn-primary:hover { box-shadow: 0 14px 38px -8px rgba(124, 92, 255, 0.75); }
+
+.btn-ghost { background: transparent; }
+.btn-ghost:hover { background: var(--surface); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 99px;
+  font-size: 12px; font-weight: 600; letter-spacing: .3px;
+  background: var(--accent-soft); color: #c3b4ff;
+  border: 1px solid rgba(124, 92, 255, 0.25);
+}
+.chip.mono { font-family: var(--mono); font-weight: 500; }
+
+.label-eyebrow {
+  text-transform: uppercase; letter-spacing: 3px; font-size: 11px;
+  color: var(--text-2); font-weight: 600;
+}
+
+.spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: #fff;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.skeleton {
+  background: linear-gradient(100deg, rgba(255,255,255,0.04) 30%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.04) 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.3s infinite;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }

@@ -1,0 +1,48 @@
+# Brivo Lumina — full stack in one command:  docker compose up --build
+#
+#   postgres : database (host 5433 -> container 5432; 5432 is used by another
+#              local Postgres on this machine)
+#   app      : the Go binary serving BOTH the API and the built React UI
+#              (host 8088 -> container 8080)
+#
+# Open http://localhost:8088 once it's healthy.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lumina-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lumina
+      POSTGRES_PASSWORD: lumina
+      POSTGRES_DB: lumina
+    ports:
+      - "5433:5432"
+    volumes:
+      - lumina_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumina -d lumina"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lumina-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Inside the compose network the DB is reached at host "postgres":5432.
+      DATABASE_URL: postgres://lumina:lumina@postgres:5432/lumina?sslmode=disable
+      LUMINA_ADDR: ":8080"
+    ports:
+      - "8088:8080"
+    volumes:
+      - lumina_data:/app/data   # persist generated images across restarts
+
+volumes:
+  lumina_pgdata:
+  lumina_data:

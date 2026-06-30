@@ -1,0 +1,24 @@
+# Node / frontend
+node_modules/
+frontend/dist/
+*.local
+
+# Go / backend
+backend/lumina
+backend/data/
+*.test
+*.out
+
+# Logs & temp
+*.log
+scratchpad/
+*.tmp
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Claude local
+.claude/

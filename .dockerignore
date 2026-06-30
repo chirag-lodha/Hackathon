@@ -1,0 +1,9 @@
+# keep the build context small & reproducible
+**/node_modules
+**/dist
+backend/data
+backend/lumina
+**/*.log
+.git
+.claude
+scratchpad
