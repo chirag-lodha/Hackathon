@@ -18,7 +18,7 @@ const fade = {
 
 export default function Workspace() {
   const nav = useNavigate()
-  const { session, addHistory } = useSession()
+  const { session, addHistory, commandQueue, shiftCommand, dispatchCommand, setWorkspaceStatus } = useSession()
 
   const [frames, setFrames] = useState(session?.initialFrames || [])
   const [cursors, setCursors] = useState(session?.cursors || null)
@@ -143,6 +143,49 @@ export default function Workspace() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roi])
+
+  // Publish live status so Goku (the agent) knows the current workspace state.
+  useEffect(() => {
+    setWorkspaceStatus({ frameSelected: !!selected, frameCount: frames.length, hasResult: !!result, mode })
+    return () => setWorkspaceStatus({})
+  }, [selected, frames.length, result, mode, setWorkspaceStatus])
+
+  // Consume Goku's command queue one-by-one (order preserved across renders).
+  useEffect(() => {
+    if (!commandQueue.length) return
+    const cmd = commandQueue[0]
+    const mid = () => frames[Math.floor(frames.length / 2)]
+    // If an enhance is requested with no frame selected, pick the middle frame
+    // first and re-queue the command for the next cycle (when state has updated).
+    const ensureFrame = () => {
+      if (!selected && frames.length) { selectFrame(mid()); dispatchCommand(cmd); shiftCommand(); return false }
+      return true
+    }
+    switch (cmd.type) {
+      case 'select_frame': {
+        const pos = cmd.params?.position
+        let idx = typeof cmd.params?.index === 'number' ? cmd.params.index : 0
+        if (pos === 'last') idx = frames.length - 1
+        else if (pos === 'middle') idx = Math.floor(frames.length / 2)
+        const f = frames[Math.max(0, Math.min(idx, frames.length - 1))]
+        if (f) selectFrame(f)
+        shiftCommand()
+        break
+      }
+      case 'set_roi': {
+        const { x, y, w, h } = cmd.params || {}
+        if ([x, y, w, h].every((n) => typeof n === 'number')) setRoi({ x, y, w, h })
+        shiftCommand()
+        break
+      }
+      case 'clear_roi': setRoi(null); shiftCommand(); break
+      case 'super_res': if (ensureFrame()) { run2D('super_res'); shiftCommand() } break
+      case 'holistic': if (ensureFrame()) { run2D('holistic'); shiftCommand() } break
+      case 'super_saiyan': if (ensureFrame()) { runSuperSaiyan(); shiftCommand() } break
+      default: shiftCommand(); break
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commandQueue])
 
   if (!session) return null
 

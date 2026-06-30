@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"lumina/internal/agent"
 	"lumina/internal/db"
 	"lumina/internal/types"
 )
@@ -159,6 +160,24 @@ func (s *Server) handleAlternate(w http.ResponseWriter, r *http.Request) {
 		ROI:      req.ROI,
 		MS:       res.MS,
 	})
+}
+
+// POST /api/chat — Goku: send the conversation + app context to Gemini and
+// return a spoken reply + UI actions for the frontend to execute.
+func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
+	var req agent.ChatRequest
+	if err := decode(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	resp, err := s.agent.Chat(r.Context(), req)
+	if err != nil {
+		// Degrade gracefully: speak the problem rather than failing the UI.
+		log.Printf("agent error: %v", err)
+		writeJSON(w, http.StatusOK, agent.ChatResponse{Reply: "Sorry, my AI brain had a problem. Please try again.", Actions: nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // POST /api/history — return successful trials, newest first.

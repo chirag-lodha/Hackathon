@@ -84,9 +84,25 @@ export function SessionProvider({ children }) {
     } catch {}
   }, [])
 
+  // Command QUEUE: Goku (the voice agent, mounted app-wide) enqueues UI commands
+  // that the Workspace consumes one-by-one (select frame, super-res, holistic, 3D).
+  // A queue (not a single slot) preserves order for multi-step actions.
+  const [commandQueue, setCommandQueue] = useState([])
+  const dispatchCommand = useCallback((cmd) => {
+    setCommandQueue((q) => [...q, { ...cmd, _id: `${cmd.type}-${Math.round(performance.now())}-${Math.random()}` }])
+  }, [])
+  const shiftCommand = useCallback(() => setCommandQueue((q) => q.slice(1)), [])
+
+  // Workspace publishes its live status here so Goku knows the current state.
+  const [workspaceStatus, setWorkspaceStatus] = useState({})
+
   return (
     <SessionContext.Provider
-      value={{ session, setSession, history, addHistory, removeHistory, clearHistory, adminMode, toggleAdmin }}
+      value={{
+        session, setSession, history, addHistory, removeHistory, clearHistory,
+        adminMode, toggleAdmin, commandQueue, dispatchCommand, shiftCommand,
+        workspaceStatus, setWorkspaceStatus,
+      }}
     >
       {children}
     </SessionContext.Provider>

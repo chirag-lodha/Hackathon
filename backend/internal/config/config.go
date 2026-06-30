@@ -3,10 +3,39 @@
 package config
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
+
+// loadDotEnv reads KEY=VALUE lines from a .env file (if present) and sets them
+// in the environment, WITHOUT overriding values already set. Keeps secrets like
+// GEMINI_API_KEY out of source/commits — put them in backend/.env (gitignored).
+func loadDotEnv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.Trim(strings.TrimSpace(v), `"'`)
+		if k != "" && os.Getenv(k) == "" {
+			_ = os.Setenv(k, v)
+		}
+	}
+}
 
 type Config struct {
 	// Addr is the listen address, e.g. ":8080".
@@ -33,6 +62,12 @@ type Config struct {
 	// AuthKey here is a default; per-request authKey from the UI takes priority.
 	CameraAPIBase string
 	CameraAuthKey string
+
+	// ---- Goku AI agent (Google Gemini) ----
+	// GeminiAPIKey: free key from Google AI Studio (https://aistudio.google.com).
+	// GeminiModel: e.g. gemini-2.0-flash / gemini-2.5-flash / gemini-1.5-flash.
+	GeminiAPIKey string
+	GeminiModel  string
 }
 
 func getenv(key, def string) string {
@@ -53,6 +88,8 @@ func getenvInt(key string, def int) int {
 
 // Load builds a Config from the environment with sensible defaults.
 func Load() *Config {
+	loadDotEnv(".env")      // backend/.env when run from backend/
+	loadDotEnv("../.env")   // repo-root .env fallback
 	dataDir := getenv("LUMINA_DATA_DIR", "data")
 	c := &Config{
 		Addr:          getenv("LUMINA_ADDR", ":8080"),
@@ -64,6 +101,8 @@ func Load() *Config {
 		DatabaseURL:   getenv("DATABASE_URL", "postgres://lumina:lumina@localhost:5433/lumina?sslmode=disable"),
 		CameraAPIBase: getenv("LUMINA_CAMERA_API", ""),
 		CameraAuthKey: getenv("LUMINA_CAMERA_AUTHKEY", ""),
+		GeminiAPIKey:  getenv("GEMINI_API_KEY", ""),
+		GeminiModel:   getenv("GEMINI_MODEL", "gemini-2.0-flash"),
 	}
 	return c
 }

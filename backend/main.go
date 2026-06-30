@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"lumina/internal/agent"
 	"lumina/internal/camera"
 	"lumina/internal/config"
 	"lumina/internal/db"
@@ -41,7 +42,13 @@ func main() {
 
 	cam := camera.New(cfg, st)
 	eng := model.NewEngine(cfg, st)
-	srv := server.New(cfg, st, cam, eng, repo)
+	ag := agent.New(cfg.GeminiAPIKey, cfg.GeminiModel)
+	if ag.Enabled() {
+		log.Printf("Goku agent enabled (model: %s)", cfg.GeminiModel)
+	} else {
+		log.Printf("Goku agent disabled (set GEMINI_API_KEY to enable)")
+	}
+	srv := server.New(cfg, st, cam, eng, repo, ag)
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,

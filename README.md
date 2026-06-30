@@ -201,6 +201,7 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 | POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?}` | `{id, state, imageUrl, sourceUrl, width, height, scale, ms}` |
 | POST | `/api/alternate` | `{imagePath, cameraEsn, sessionName?, ..., roi?}` | `{id, state, imageUrl, sources[], ms}` — holistic |
 | POST | `/api/history` | `{}` | `{records[]}` — successful trials, newest first |
+| POST | `/api/chat` | `{messages[], context}` | `{reply, actions[]}` — Goku (Gemini) agent |
 | DELETE | `/api/trials/{id}` | — | delete one trial + its output file (hidden admin) |
 | DELETE | `/api/trials` | — | wipe all trials + output files (hidden admin) |
 | GET | `/api/health` | — | `{status:"ok"}` |
@@ -209,6 +210,30 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 `direction` is `around` (initial), `left`, or `right` (paging via `cursor`).
 
 ---
+
+## Goku — the AI voice assistant (Gemini)
+
+Goku is an app-wide voice agent (Google Gemini) that understands free speech and
+drives the UI: create a session, select a frame, draw an ROI, run Super-Res /
+Holistic / Super-Saiyan 3D, open history. Tap the mic once for a hands-free
+conversation, or type in the panel.
+
+**Every collaborator uses their own free Gemini key.** The key lives only in
+`backend/.env` (gitignored) — it is never committed or shared:
+
+```bash
+# 1. get a free key (no billing needed): https://aistudio.google.com/apikey
+# 2. create your local env file from the template
+cp backend/.env.example backend/.env
+# 3. edit backend/.env → set GEMINI_API_KEY=<your key>
+#    (free tier: keep GEMINI_MODEL=gemini-2.5-flash)
+# 4. start the backend — it auto-loads backend/.env
+cd backend && LUMINA_ADDR=:8090 go run .   # logs "Goku agent enabled"
+```
+
+Without a key, Goku still loads but says "my AI brain isn't configured yet" — the
+rest of the app works normally. For Docker, add the key to the `app` service via
+`env_file: backend/.env` or an `environment:` entry.
 
 ## Hidden admin delete
 
@@ -252,6 +277,8 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
 | `LUMINA_CAMERA_API` | _(empty)_ | upstream camera/VMS base URL (later) |
 | `LUMINA_CAMERA_AUTHKEY` | _(empty)_ | default camera auth key (later) |
 | `DATABASE_URL` | `postgres://lumina:lumina@localhost:5433/lumina?sslmode=disable` | Postgres connection |
+| `GEMINI_API_KEY` | _(empty)_ | Goku AI assistant — free key from Google AI Studio |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model (use `gemini-2.5-flash` for free tier) |
 
 ---
 
@@ -322,8 +349,13 @@ docker compose up -d postgres          # Postgres on host :5433
 ```bash
 cd backend
 go mod download                        # first time
+cp .env.example .env                   # then add your own GEMINI_API_KEY (see "Goku" below)
 LUMINA_ADDR=:8090 go run .             # API on :8090; runs migrations on startup
 ```
+
+> 🔑 To enable the Goku AI assistant, put **your own** free Gemini key in
+> `backend/.env`. See [Goku — the AI voice assistant](#goku--the-ai-voice-assistant-gemini).
+> The app runs fine without it (Goku just says it's not configured).
 
 **3. Frontend** (Node 18+)
 

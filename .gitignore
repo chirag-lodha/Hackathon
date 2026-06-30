@@ -22,3 +22,8 @@ scratchpad/
 
 # Claude local
 .claude/
+
+# Secrets — never commit
+.env
+*.env
+backend/.env

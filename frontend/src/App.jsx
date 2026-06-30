@@ -5,6 +5,7 @@ import Landing from './pages/Landing.jsx'
 import NewSession from './pages/NewSession.jsx'
 import Workspace from './pages/Workspace.jsx'
 import History from './pages/History.jsx'
+import VoiceAssistant from './components/VoiceAssistant.jsx'
 
 export default function App() {
   const location = useLocation()
@@ -18,6 +19,8 @@ export default function App() {
           <Route path="/history" element={<History />} />
         </Routes>
       </AnimatePresence>
+      {/* Goku — app-wide voice agent */}
+      <VoiceAssistant />
     </div>
   )
 }

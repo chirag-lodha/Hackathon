@@ -64,3 +64,8 @@ export function deleteAllTrials() {
   if (USE_MOCK) return Promise.resolve({ deleted: 'all' })
   return del('/trials')
 }
+
+/** Goku agent: send conversation + app context, get {reply, actions}. */
+export function chatAgent(payload) {
+  return post('/chat', payload)
+}

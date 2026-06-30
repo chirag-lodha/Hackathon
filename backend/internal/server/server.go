@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"lumina/internal/agent"
 	"lumina/internal/camera"
 	"lumina/internal/config"
 	"lumina/internal/db"
@@ -21,10 +22,11 @@ type Server struct {
 	camera *camera.Client
 	engine *model.Engine
 	repo   *db.Repo
+	agent  *agent.Agent
 }
 
-func New(cfg *config.Config, st *store.Store, cam *camera.Client, eng *model.Engine, repo *db.Repo) *Server {
-	return &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo}
+func New(cfg *config.Config, st *store.Store, cam *camera.Client, eng *model.Engine, repo *db.Repo, ag *agent.Agent) *Server {
+	return &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag}
 }
 
 // Handler builds the full http.Handler (routes + middleware).
@@ -38,6 +40,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/history", s.handleHistory)
 	mux.HandleFunc("DELETE /api/trials/{id}", s.handleDeleteTrial)
 	mux.HandleFunc("DELETE /api/trials", s.handleDeleteAllTrials)
+	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 
 	// Static: generated/processed images.
