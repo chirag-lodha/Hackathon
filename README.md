@@ -136,6 +136,9 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 - **Super-Res** and **Holistic View** operations, with auto re-run on ROI change
 - **Before/after compare slider** and holistic composite + source cameras
 - **History gallery** + full-screen lightbox with keyboard navigation
+- **Super-Saiyan mode** — view a holistic result as an orbitable 3D scene (main
+  image centered, source cameras placed by their direction); appears only after a
+  holistic run. Renders whatever cameras/angles the API returns.
 - **Trials persisted in Postgres** with a `CREATED → PROCESSING → SUCCESS/FAILURE`
   lifecycle; ROI stored as two-point coords `[{x,y},{x,y}]`
 - **Hidden admin delete** (type `delete`) — per-item + delete-all, removes rows and

@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, Cctv, Clock, Wand2, Layers, Square, XCircle, ImageIcon } from 'lucide-react'
+import { ArrowLeft, Cctv, Clock, Wand2, Layers, Square, XCircle, ImageIcon, Zap, Loader2, Box } from 'lucide-react'
 import Logo from '../components/Logo.jsx'
 import Filmstrip from '../components/Filmstrip.jsx'
 import RoiCanvas from '../components/RoiCanvas.jsx'
 import ResultViewer from '../components/ResultViewer.jsx'
+import Holistic3D from '../components/Holistic3D.jsx'
 import { useSession } from '../context/SessionContext.jsx'
 import { fetchFrames, superResolve, alternateOperation } from '../api/client.js'
 
@@ -30,6 +31,8 @@ export default function Workspace() {
   const [result, setResult] = useState(null)
   const [resultLoading, setResultLoading] = useState(false)
   const [resultError, setResultError] = useState(null)
+  // Super-Saiyan: show the holistic result as an orbitable 3D scene in the stage.
+  const [superSaiyan, setSuperSaiyan] = useState(false)
 
   const seenIds = useRef(new Set((session?.initialFrames || []).map((f) => f.id)))
 
@@ -72,6 +75,24 @@ export default function Workspace() {
     setRoi(null)
     setResult(null)
     setResultError(null)
+    setSuperSaiyan(false)
+  }
+
+  // Standard 2D ops (Super-Res / Holistic) — exit 3D first.
+  const run2D = (op) => {
+    setSuperSaiyan(false)
+    runOp(op)
+  }
+
+  // Super-Saiyan: toggle the 3D holistic stage. Runs holistic if we don't
+  // already have a holistic result to feed the scene.
+  const runSuperSaiyan = () => {
+    if (superSaiyan) {
+      setSuperSaiyan(false)
+      return
+    }
+    setSuperSaiyan(true)
+    if (!(mode === 'holistic' && result)) runOp('holistic')
   }
 
   const runOp = useCallback(
@@ -144,7 +165,21 @@ export default function Workspace() {
 
       <div className="ws-body">
         <section className="ws-stage">
-          {selected ? (
+          {superSaiyan ? (
+            resultLoading || !(result && result.type === 'holistic') ? (
+              <div className="ws-stage-empty">
+                <div className="ss-orb"><Zap size={28} /></div>
+                <h3>Charging Super-Saiyan…</h3>
+                <p>Fusing every camera on this location into a 3D scene.</p>
+              </div>
+            ) : (
+              <>
+                <Holistic3D result={result} />
+                <div className="ss-badge"><Zap size={13} /> Super-Saiyan · 3D</div>
+                <button className="ss-exit" onClick={() => setSuperSaiyan(false)}><XCircle size={15} /> Exit 3D</button>
+              </>
+            )
+          ) : selected ? (
             <RoiCanvas src={selected.thumb} roi={roi} onChange={setRoi} />
           ) : (
             <div className="ws-stage-empty">
@@ -153,7 +188,7 @@ export default function Workspace() {
               <p>Pick a frame from the strip below to inspect and enhance it.</p>
             </div>
           )}
-          {selected && (
+          {selected && !superSaiyan && (
             <div className="ws-stage-foot">
               <span className="chip mono">{selected.label}</span>
               <span className="ws-stage-path">{selected.path}</span>
@@ -189,14 +224,24 @@ export default function Workspace() {
                 </div>
 
                 <div className="ws-actions">
-                  <button className={`ws-action ${mode === 'super_res' && result ? 'active' : ''}`} onClick={() => runOp('super_res')} disabled={resultLoading}>
+                  <button className={`ws-action ${!superSaiyan && mode === 'super_res' && result ? 'active' : ''}`} onClick={() => run2D('super_res')} disabled={resultLoading}>
                     <div className="ws-action-ico"><Wand2 size={20} /></div>
                     <div className="ws-action-txt"><strong>Super-Res</strong><span>Enhance this frame to high resolution</span></div>
                   </button>
-                  <button className={`ws-action ${mode === 'holistic' && result ? 'active' : ''}`} onClick={() => runOp('holistic')} disabled={resultLoading}>
+                  <button className={`ws-action ${!superSaiyan && mode === 'holistic' && result ? 'active' : ''}`} onClick={() => run2D('holistic')} disabled={resultLoading}>
                     <div className="ws-action-ico alt"><Layers size={20} /></div>
                     <div className="ws-action-txt"><strong>Holistic View</strong><span>Fuse all cameras on this location</span></div>
                   </button>
+                  {mode === 'holistic' && result && (
+                    <button className={`ws-action ss-action ${superSaiyan ? 'active' : ''}`} onClick={runSuperSaiyan} disabled={resultLoading}>
+                      <div className="ws-action-ico ss"><Zap size={20} /></div>
+                      <div className="ws-action-txt">
+                        <strong>Super-Saiyan {superSaiyan ? '· ON' : ''}</strong>
+                        <span>View this holistic fusion in interactive 3D</span>
+                      </div>
+                      <Box size={16} className="ss-corner" />
+                    </button>
+                  )}
                 </div>
 
                 <div className="ws-result">
@@ -253,6 +298,28 @@ export default function Workspace() {
         .ws-action:disabled { opacity: .5; cursor: wait; }
         .ws-action-ico { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-grad); color: #fff; }
         .ws-action-ico.alt { background: linear-gradient(135deg, #4ad6ff, #3ddc97); }
+
+        /* Super-Saiyan: full-width golden energy action */
+        .ss-action { position: relative; grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 14px; overflow: hidden; }
+        .ss-action::before { content: ''; position: absolute; inset: 0; opacity: 0; transition: opacity .25s ease;
+          background: radial-gradient(280px 120px at 100% 0%, rgba(255,193,84,.18), transparent 70%); }
+        .ss-action:hover::before { opacity: 1; }
+        .ss-action.active { border-color: rgba(255,193,84,.6); box-shadow: 0 0 0 2px rgba(255,193,84,.2), 0 0 26px rgba(255,193,84,.25); }
+        .ws-action-ico.ss { background: linear-gradient(135deg, #ffd454, #ff8a3c); color: #2a1800; box-shadow: 0 0 18px rgba(255,170,60,.5); }
+        .ss-action.active .ws-action-ico.ss { animation: sspulse 1.1s ease-in-out infinite; }
+        @keyframes sspulse { 0%,100% { box-shadow: 0 0 14px rgba(255,170,60,.45); } 50% { box-shadow: 0 0 30px rgba(255,170,60,.85); } }
+        .ss-corner { position: absolute; right: 12px; top: 12px; color: var(--text-2); }
+
+        /* 3D stage overlays */
+        .ss-orb { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 8px;
+          background: radial-gradient(circle at 50% 40%, #ffe08a, #ff8a3c); color: #2a1800; box-shadow: 0 0 36px rgba(255,170,60,.7); animation: sspulse 1s ease-in-out infinite; }
+        .ss-badge { position: absolute; top: 12px; left: 12px; z-index: 5; display: inline-flex; align-items: center; gap: 6px;
+          font-size: 12px; font-weight: 700; letter-spacing: .3px; padding: 6px 12px; border-radius: 99px; color: #2a1800;
+          background: linear-gradient(135deg, #ffd454, #ff8a3c); box-shadow: 0 4px 16px rgba(255,140,60,.4); }
+        .ss-exit { position: absolute; top: 12px; right: 12px; z-index: 5; display: inline-flex; align-items: center; gap: 6px;
+          font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 10px; color: var(--text-0);
+          background: rgba(0,0,0,.5); border: 1px solid var(--border); backdrop-filter: blur(8px); }
+        .ss-exit:hover { background: rgba(0,0,0,.7); border-color: var(--border-strong); }
         .ws-action-txt strong { display: block; font-size: 14px; }
         .ws-action-txt span { font-size: 11px; color: var(--text-2); line-height: 1.4; }
 

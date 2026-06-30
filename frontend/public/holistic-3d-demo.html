@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Holistic View — 3D concept demo · Brivo Lumina</title>
+<style>
+  :root { --accent:#7c5cff; --accent2:#4ad6ff; }
+  * { margin:0; box-sizing:border-box; }
+  html,body { height:100%; background:#07070c; overflow:hidden; font-family:Inter,system-ui,sans-serif; color:#f4f4fa; }
+  #c { position:fixed; inset:0; display:block; }
+  .hud { position:fixed; left:24px; top:22px; z-index:10; pointer-events:none; }
+  .eyebrow { text-transform:uppercase; letter-spacing:3px; font-size:11px; color:#7a7a90; font-weight:600; }
+  h1 { font-size:26px; font-weight:800; letter-spacing:-.5px; margin-top:4px;
+       background:linear-gradient(135deg,#7c5cff,#4ad6ff); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .tag { margin-top:8px; font-size:13px; color:#b9b9cc; max-width:380px; line-height:1.5; }
+  .hint { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:10;
+          font-size:12px; color:#b9b9cc; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12);
+          padding:8px 16px; border-radius:99px; backdrop-filter:blur(10px); }
+  .badge { position:fixed; right:24px; top:22px; z-index:10; font-size:11px; font-weight:600; letter-spacing:.5px;
+           color:#c3b4ff; background:rgba(124,92,255,.14); border:1px solid rgba(124,92,255,.3);
+           padding:6px 12px; border-radius:99px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud">
+  <div class="eyebrow">Brivo Lumina</div>
+  <h1>Holistic View — 3D</h1>
+  <div class="tag">Concept demo: the source cameras covering a location feed into one fused, enhanced view. Drag to orbit · scroll to zoom.</div>
+</div>
+<div class="badge">CONCEPT · not in the app</div>
+<div class="hint">🖱️ Drag to rotate · scroll to zoom · auto-rotating</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const palettes = [['#1e3a8a','#7c5cff'],['#0f766e','#4ad6ff'],['#9d174d','#f97316'],
+                  ['#4338ca','#06b6d4'],['#7c2d12','#fbbf24'],['#155e75','#a3e635']];
+
+// Build a fake "camera frame" texture with canvas (gradient + shapes + label).
+function makeTex(label, [c1,c2], sharp){
+  const cv = document.createElement('canvas'); cv.width=512; cv.height=320;
+  const x = cv.getContext('2d');
+  const g = x.createLinearGradient(0,0,512,320); g.addColorStop(0,c1); g.addColorStop(1,c2);
+  x.fillStyle=g; x.fillRect(0,0,512,320);
+  for(let i=0;i<7;i++){
+    x.fillStyle='rgba(255,255,255,'+(sharp?0.05:0.16)+')';
+    x.fillRect((i*97)%480, (i*131)%280, 40+(i*23)%60, 40+(i*23)%60);
+  }
+  x.fillStyle='rgba(0,0,0,.28)'; x.fillRect(160,130,190,120);
+  x.fillStyle='rgba(255,255,255,.5)'; x.beginPath(); x.arc(256,128,36,0,7); x.fill();
+  if(!sharp){ x.globalAlpha=.0; } // (kept simple)
+  x.globalAlpha=1; x.fillStyle='rgba(0,0,0,.55)'; x.fillRect(0,286,512,34);
+  x.fillStyle='#fff'; x.font='bold 20px ui-monospace,monospace'; x.fillText(label, 12, 310);
+  const t = new THREE.CanvasTexture(cv); t.anisotropy=8; return t;
+}
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#07070c');
+scene.fog = new THREE.Fog('#07070c', 9, 20);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100);
+camera.position.set(1.4, 1.2, 7.8);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.9;
+controls.target.set(0, 0.4, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const p1 = new THREE.PointLight(0x7c5cff, 60, 40); p1.position.set(-4,5,4); scene.add(p1);
+const p2 = new THREE.PointLight(0x4ad6ff, 40, 40); p2.position.set(5,3,-3); scene.add(p2);
+
+// floor grid for depth
+const grid = new THREE.GridHelper(28, 28, 0x3a3a5a, 0x1a1a2a);
+grid.position.y = -1.6; scene.add(grid);
+
+// helper: a framed panel (image plane + glowing border + optional label sprite)
+function panel(tex, w, h, accent){
+  const grp = new THREE.Group();
+  const border = new THREE.Mesh(new THREE.PlaneGeometry(w+0.12, h+0.12),
+      new THREE.MeshBasicMaterial({color: accent}));
+  border.position.z = -0.02;
+  const img = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({map: tex}));
+  grp.add(border, img);
+  return grp;
+}
+
+// CENTER: only the MAIN image (primary camera).
+const center = panel(makeTex('MAIN · CAM 1001A2B3', palettes[0], true), 3.0, 1.9, 0x7c5cff);
+center.position.set(0, 0.4, 0);
+scene.add(center);
+
+// All other source cameras placed BY THEIR DIRECTION (whatever the API returns).
+const buckets = {
+  left:{base:[-3.0,0.3,-0.2],spread:[-1.7,0,-0.5]}, right:{base:[3.0,0.3,-0.2],spread:[1.7,0,-0.5]},
+  overhead:{base:[0,2.5,-0.9],spread:[1.8,0,0]}, rear:{base:[0,0.4,-3.6],spread:[1.8,0,0]},
+  front:{base:[0,-1.7,2.4],spread:[1.8,0,0]},
+};
+const classify = a => { a=(a||'').toLowerCase();
+  if(a.includes('left'))return'left'; if(a.includes('right'))return'right';
+  if(a.includes('over')||a.includes('top'))return'overhead';
+  if(a.includes('rear')||a.includes('back'))return'rear'; if(a.includes('front'))return'front'; return null; };
+const esns = ['2044C7D1','3098E5F2','4012B9A6','5077F1C8'];
+const angles = ['Left 30°','Right 30°','Overhead','Rear'];
+const used = {};
+for(let i=0;i<esns.length;i++){
+  const b = classify(angles[i]); let px,py,pz;
+  if(b){ const k=used[b]||0; used[b]=k+1; const {base,spread}=buckets[b];
+    px=base[0]+spread[0]*k; py=base[1]+spread[1]*k; pz=base[2]+spread[2]*k;
+  } else { const k=used.u||0; used.u=k+1; const t=k/Math.max(esns.length-1,1)-0.5, ang=t*Math.PI*0.9;
+    px=Math.sin(ang)*3.8; py=0.3; pz=-Math.cos(ang)*3.8+0.2; }
+  const cam = panel(makeTex('CAM '+esns[i]+' · '+angles[i], palettes[(i+1)%palettes.length], false), 1.5, 0.95, 0x4ad6ff);
+  cam.position.set(px, py, pz);
+  cam.lookAt(0, 0.4, 0);
+  cam.scale.setScalar(0.82);
+  scene.add(cam);
+
+  const geo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(px, py, pz), new THREE.Vector3(0, 0.4, 0)
+  ]);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({color:0x4ad6ff, transparent:true, opacity:0.25}));
+  scene.add(line);
+}
+
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+function loop(){
+  requestAnimationFrame(loop);
+  controls.update();
+  renderer.render(scene, camera);
+}
+loop();
+</script>
+</body>
+</html>

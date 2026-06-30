@@ -76,48 +76,72 @@ func (e *Engine) SuperResolve(srcRel string, roi *types.ROI) (SuperResult, error
 // through the model, and fuse (panorama/stitch or learned multi-view fusion).
 func (e *Engine) Holistic(srcRel, esn string, roi *types.ROI) (HolisticResult, error) {
 	start := time.Now()
-
-	// Always include the originally selected frame as the primary view.
-	primary, err := imaging.LoadPNG(mustAbs(e.store, srcRel))
-	if err != nil {
-		return HolisticResult{}, fmt.Errorf("load source: %w", err)
-	}
-	if roi != nil {
-		primary = imaging.Crop(primary, roi.X, roi.Y, roi.W, roi.H)
+	scale := e.cfg.SuperResScale
+	if scale < 1 {
+		scale = 4
 	}
 
-	camCount := 3 + int(hashByte(esn)%3) // 3..5 cameras
+	// makeHiRes builds a CRISP high-res view for a camera seed (regenerate at
+	// high resolution, same approach as super-res), cropped to the ROI if set.
+	makeHiRes := func(seed string) image.Image {
+		full := imaging.GenerateFrame(seed, 320*scale, 200*scale)
+		if roi != nil && roi.W > 0 && roi.H > 0 {
+			return imaging.Crop(full, roi.X, roi.Y, roi.W, roi.H)
+		}
+		return full
+	}
+	saveView := func(name string, img image.Image) string {
+		rel := filepath.ToSlash(filepath.Join("outputs", name))
+		_ = imaging.SavePNG(img, mustAbs(e.store, rel))
+		return e.store.URL(rel)
+	}
+
+	// Dummy: 5 cameras with fixed directions for now. When the real camera API is
+	// wired in, this list (count + angles/positions) comes from the upstream
+	// response — the frontend already renders whatever sources/angles arrive.
 	angles := []string{"Front", "Left 30°", "Right 30°", "Overhead", "Rear"}
+	camCount := len(angles) // 5
 
-	views := []image.Image{enhanceImg(primary, e.cfg.SuperResScale)}
+	// Primary (the selected frame) as a HIGH-RES view. Regenerate from its seed
+	// for generated captures; otherwise upscale+enhance the real pixels.
+	var primaryHi image.Image
+	if seed, ok := seedFromPath(srcRel); ok {
+		primaryHi = makeHiRes(seed)
+	} else {
+		primary, err := imaging.LoadPNG(mustAbs(e.store, srcRel))
+		if err != nil {
+			return HolisticResult{}, fmt.Errorf("load source: %w", err)
+		}
+		if roi != nil && roi.W > 0 && roi.H > 0 {
+			primary = imaging.Crop(primary, roi.X, roi.Y, roi.W, roi.H)
+		}
+		primaryHi = enhanceImg(primary, scale)
+	}
+
+	ts := time.Now().UnixNano()
+	views := []image.Image{primaryHi}
 	sources := []types.HolisticSource{{
 		ESN:   esn,
 		Angle: angles[0],
-		Thumb: e.store.URL(srcRel),
+		Thumb: saveView(fmt.Sprintf("hol-%d-0.png", ts), primaryHi), // high-res
 	}}
 
 	for i := 1; i < camCount; i++ {
 		altESN := fmt.Sprintf("%s%04d", trimESN(esn), int(hashByte(esn+itoa(i)))%9000+1000)
 		seed := fmt.Sprintf("%s-alt-%d", esn, i)
-		// dummy co-located camera frame; LATER: fetch real frame for altESN.
-		var camImg image.Image = imaging.GenerateFrame(seed, 320, 200)
-		if roi != nil {
-			camImg = imaging.Crop(camImg, roi.X, roi.Y, roi.W, roi.H)
-		}
-		views = append(views, enhanceImg(camImg, e.cfg.SuperResScale))
-
-		thumbRel := filepath.ToSlash(filepath.Join("outputs", "holsrc-"+seed+".png"))
-		_ = imaging.SavePNG(imaging.Resize(camImg, 220, 140), mustAbs(e.store, thumbRel))
+		// dummy co-located camera (crisp high-res); LATER: fetch real frame for altESN.
+		hi := makeHiRes(seed)
+		views = append(views, hi)
 		sources = append(sources, types.HolisticSource{
 			ESN:   altESN,
 			Angle: angles[i%len(angles)],
-			Thumb: e.store.URL(thumbRel),
+			Thumb: saveView(fmt.Sprintf("hol-%d-%d.png", ts, i), hi), // high-res
 		})
 	}
 
-	// Fuse into a single wide composite.
+	// Fuse into a single wide composite (from the high-res views).
 	composite := imaging.Composite(views, 2, 480, 300, 10, colorBG())
-	outRel := filepath.ToSlash(filepath.Join("outputs", fmt.Sprintf("holistic-%d.png", time.Now().UnixNano())))
+	outRel := filepath.ToSlash(filepath.Join("outputs", fmt.Sprintf("holistic-%d.png", ts)))
 	if err := imaging.SavePNG(composite, mustAbs(e.store, outRel)); err != nil {
 		return HolisticResult{}, fmt.Errorf("save holistic: %w", err)
 	}
