@@ -55,10 +55,17 @@ Request flow for an enhancement (read these together to understand it):
   serves them at `/files/...`. API responses return URLs, never image bytes. In dev,
   Vite proxies BOTH `/api` and `/files` to the backend.
 - **Dummy boundary (the part to replace for real data):**
-  - `internal/camera` synthesizes frames per `(ESN, timestamp)`. Real camera fetch
-    (via ESN + auth key) goes in `camera.ensureFrame` — marked with `LATER:` comments.
-  - `internal/model` has an `Upscaler` interface; `DummyUpscaler` does a real
-    load→crop→bilinear-upscale→enhance→save. Swap a real model in `model.NewEngine`.
+  - `internal/camera` synthesizes frames per `(ESN, timestamp)`, **softened** so the
+    stored frame looks low-res (the same capture feeds the filmstrip, main preview,
+    and super-res "before" — keep them consistent). Real camera fetch (ESN + auth
+    key) goes in `camera.ensureFrame` — marked with `LATER:` comments.
+  - `internal/model` has an `Upscaler` interface; `DummyUpscaler` simulates detail
+    recovery by regenerating the scene at high resolution (the soft source can't be
+    sharpened into detail). It derives the scene seed from the capture path
+    (`seedFromPath`); non-generated/real frames fall back to sharpen-upscale. Swap a
+    real model in `model.NewEngine`.
+  - `imaging.GenerateFrame` uses **fractional** positions so the same seed renders an
+    identical composition at any resolution (low-res capture vs high-res output align).
   - `imaging` is pure stdlib (no native deps) — keep it that way so it builds offline.
 
 ## Database conventions (important)

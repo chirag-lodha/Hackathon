@@ -111,7 +111,11 @@ func (c *Client) ensureFrame(esn string, t time.Time) (types.Frame, error) {
 
 	if !fileExists(abs) {
 		seed := fmt.Sprintf("%s-%d", esn, ms)
-		img := imaging.GenerateFrame(seed, lowResW, lowResH)
+		// Soften so the stored frame looks genuinely low-res. The SAME capture is
+		// used for the filmstrip, the main stage preview, and the super-res
+		// "before" — so all previews are consistent and only the enhanced output
+		// looks sharp. (Dummy stand-in for a real low-res camera frame.)
+		img := imaging.Blur(imaging.GenerateFrame(seed, lowResW, lowResH), 2)
 		if err := imaging.SavePNG(img, abs); err != nil {
 			return types.Frame{}, err
 		}

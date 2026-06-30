@@ -221,11 +221,16 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
 
 ## What's dummy vs real
 
-- **Frames** (`internal/camera`): synthesized deterministically per `(ESN, timestamp)`
-  and cached to `data/captures/`. **Later:** fetch real frames using the camera ESN
-  + auth key — only `camera.ensureFrame` changes.
-- **Super-resolution** (`internal/model`): `DummyUpscaler` runs a genuine
-  load → crop(ROI) → bilinear upscale → enhance → save pipeline. **Later:** implement
+- **Frames** (`internal/camera`): synthesized deterministically per `(ESN, timestamp)`,
+  **softened to look genuinely low-res**, and cached to `data/captures/`. The same
+  capture is used for the filmstrip, the main preview, and the super-res "before",
+  so all previews match. **Later:** fetch real frames using the camera ESN + auth
+  key — only `camera.ensureFrame` changes.
+- **Super-resolution** (`internal/model`): the low-res source is intentionally soft,
+  so `DummyUpscaler` simulates detail recovery by **regenerating the same scene at
+  high resolution** (crisp) for generated frames — upscaling the soft pixels would
+  just yield a bigger blur — and falls back to a sharpen-upscale for real frames.
+  Output is cropped to the ROI and written to `data/outputs/`. **Later:** implement
   the `Upscaler` interface with a real model and swap it in `NewEngine`.
 - **Holistic** (`internal/model`): derives co-located cameras from the ESN and
   composites enhanced views. **Later:** resolve the real camera set for the location

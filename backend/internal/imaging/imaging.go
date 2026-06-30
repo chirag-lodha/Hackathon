@@ -65,11 +65,16 @@ func GenerateFrame(seed string, w, h int) *image.RGBA {
 		}
 	}
 
-	// a few deterministic "objects" so frames differ visibly
+	// A few deterministic "objects" so frames differ visibly. Positions/sizes are
+	// FRACTIONAL so the same seed renders an identical composition at any
+	// resolution (low-res capture vs high-res super-res output line up exactly).
 	for i := 0; i < 7; i++ {
-		rx := int(hash32(seed+"x"+itoa(i)) % uint32(w))
-		ry := int(hash32(seed+"y"+itoa(i)) % uint32(h))
-		rs := int(hash32(seed+"s"+itoa(i))%uint32(w/5)) + w/16
+		fx := float64(hash32(seed+"x"+itoa(i))%1000) / 1000
+		fy := float64(hash32(seed+"y"+itoa(i))%1000) / 1000
+		fs := float64(hash32(seed+"s"+itoa(i))%1000) / 1000
+		rx := int(fx * float64(w))
+		ry := int(fy * float64(h))
+		rs := int((0.06 + fs*0.14) * float64(w)) // 6%–20% of width
 		fillRect(img, rx, ry, rs, rs, color.RGBA{255, 255, 255, 40})
 	}
 	// central subject block + highlight
@@ -242,6 +247,44 @@ func blurAt(img *image.RGBA, x, y int) (r, g, b float64) {
 		}
 	}
 	return rs / n, gs / n, bs / n
+}
+
+// Blur applies `passes` of a 3x3 box blur. Used to render the low-res "before"
+// image so the super-res compare clearly shows soft input vs sharp output.
+// Also materializes sub-images (ROI crops) into a 0-based RGBA.
+func Blur(src image.Image, passes int) *image.RGBA {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	cur := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			r, g, bl := sample(src, b, b.Min.X+x, b.Min.Y+y)
+			cur.SetRGBA(x, y, color.RGBA{clampU8(r), clampU8(g), clampU8(bl), 255})
+		}
+	}
+	for p := 0; p < passes; p++ {
+		next := image.NewRGBA(image.Rect(0, 0, w, h))
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				var rs, gs, bs, n float64
+				for dy := -1; dy <= 1; dy++ {
+					for dx := -1; dx <= 1; dx++ {
+						xi, yi := x+dx, y+dy
+						if xi >= 0 && yi >= 0 && xi < w && yi < h {
+							c := cur.RGBAAt(xi, yi)
+							rs += float64(c.R)
+							gs += float64(c.G)
+							bs += float64(c.B)
+							n++
+						}
+					}
+				}
+				next.SetRGBA(x, y, color.RGBA{clampU8(rs / n), clampU8(gs / n), clampU8(bs / n), 255})
+			}
+		}
+		cur = next
+	}
+	return cur
 }
 
 // Composite arranges images into a grid (used for the holistic fused view).
