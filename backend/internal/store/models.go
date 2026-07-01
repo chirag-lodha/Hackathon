@@ -96,3 +96,20 @@ type Session struct {
 }
 
 func (Session) TableName() string { return "sessions" }
+
+// Image is a preview frame downloaded from the EEN archiver. ID is a UUID
+// (the image_id given to the client). State: PROCESSING -> SUCCESS | FAILURE.
+type Image struct {
+	ID        string    `gorm:"primaryKey"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	SessionID uint   `gorm:"column:session_id"`
+	CameraESN string `gorm:"column:camera_esn"`
+	EENTs     string `gorm:"column:een_ts"`
+	Kind      string `gorm:"column:kind"`
+	State     string `gorm:"column:state"`
+	Path      string `gorm:"column:path"`
+	Error     string `gorm:"column:error"`
+}
+
+func (Image) TableName() string { return "images" }

@@ -24,8 +24,10 @@ export function SessionProvider({ children }) {
     fetchMe().then((u) => setUser(u)).finally(() => setAuthChecked(true))
   }, [])
 
-  // The active session config submitted from the New form.
+  // The active session (id + name + auth key) from the New form.
   const [session, setSession] = useState(null)
+  // The camera selected on the camera-grid page (esn, name, anchorTs).
+  const [camera, setCamera] = useState(null)
   const [history, setHistory] = useState(loadHistory)
 
   // Hidden admin (delete) mode — revealed only via the secret key sequence.
@@ -108,7 +110,7 @@ export function SessionProvider({ children }) {
     <SessionContext.Provider
       value={{
         user, setUser, authChecked,
-        session, setSession, history, addHistory, removeHistory, clearHistory,
+        session, setSession, camera, setCamera, history, addHistory, removeHistory, clearHistory,
         adminMode, toggleAdmin, commandQueue, dispatchCommand, shiftCommand,
         workspaceStatus, setWorkspaceStatus,
       }}

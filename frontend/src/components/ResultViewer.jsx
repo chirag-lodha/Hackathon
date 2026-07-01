@@ -1,13 +1,13 @@
 import { Loader2, ImageOff, Download, Layers } from 'lucide-react'
 import Compare from './Compare.jsx'
 
-export default function ResultViewer({ mode, loading, result, error }) {
+export default function ResultViewer({ mode, loading, note, result, error }) {
   if (loading) {
     return (
       <div className="rv-state">
         <Loader2 className="rv-spin" size={30} />
         <p>{mode === 'holistic' ? 'Fusing camera views…' : 'Super-resolving…'}</p>
-        <span className="rv-sub">Running inference on the selected frame</span>
+        <span className="rv-sub">{note || 'Running inference on the selected frame'}</span>
         <div className="rv-skeleton skeleton" />
       </div>
     )

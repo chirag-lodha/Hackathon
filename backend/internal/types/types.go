@@ -164,3 +164,55 @@ type CreateSessionResponse struct {
 	Name      string `json:"name"`
 	ExpiresAt string `json:"expiresAt"`
 }
+
+// ---------- cameras + preview images (EEN account via the auth key) ----------
+
+type CamerasRequest struct {
+	SessionID string `json:"sessionId"`
+	AuthKey   string `json:"authKey"`
+}
+
+type Camera struct {
+	ESN      string `json:"esn"`
+	Name     string `json:"name"`
+	Location string `json:"location"`
+	Status   string `json:"status"`  // "online" | "offline"
+	ImageID  string `json:"imageId"` // uuid of its latest-preview download
+}
+
+type CamerasResponse struct {
+	Cameras []Camera          `json:"cameras"`
+	Images  map[string]string `json:"images"` // esn -> imageId
+}
+
+// ImageStatusResponse is the poll result for a preview/image download.
+type ImageStatusResponse struct {
+	ID    string `json:"id"`
+	State string `json:"state"` // PROCESSING | SUCCESS | FAILURE
+	Ts    string `json:"ts"`    // EEN timestamp (once known)
+	Error string `json:"error,omitempty"`
+}
+
+// PreviewsRequest asks for N preview frames around a camera's current frame,
+// walking backward/forward from aroundTs (empty = latest).
+type PreviewsRequest struct {
+	SessionID string `json:"sessionId"`
+	AuthKey   string `json:"authKey"`
+	CameraESN string `json:"cameraEsn"`
+	AroundTs  string `json:"aroundTs"`  // EEN ts to anchor on ("" = latest)
+	Direction string `json:"direction"` // "around" | "older" | "newer"
+	Count     int    `json:"count"`     // frames per side/direction
+}
+
+type Preview struct {
+	ImageID string `json:"imageId"`
+	Ts      string `json:"ts"` // EEN timestamp
+	State   string `json:"state"`
+}
+
+type PreviewsResponse struct {
+	Previews []Preview `json:"previews"`
+	// Cursor timestamps for paging further in each direction.
+	OldestTs string `json:"oldestTs"`
+	NewestTs string `json:"newestTs"`
+}

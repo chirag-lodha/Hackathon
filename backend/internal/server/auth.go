@@ -172,3 +172,4 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: sess.ExpiresAt.UTC().Format(time.RFC3339),
 	})
 }
+

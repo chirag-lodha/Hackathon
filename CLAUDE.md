@@ -5,11 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 **Brivo Lumina** — camera super-resolution app. React (Vite) frontend + Go backend
-+ Postgres. Pull a ±5s window of camera frames, draw an optional ROI, and enhance
-to high-res ("Super-Res") or fuse co-located cameras ("Holistic View"). Each action
-is a *Trial* persisted in Postgres. Has **username/password auth** (user-owned
++ Postgres. Enter an account auth key → browse the account's **real Eagle Eye
+Networks cameras** → pull a window of preview frames around any moment → draw an
+optional ROI → enhance to high-res ("Super-Res") or fuse co-located cameras
+("Holistic View"). Each enhancement is a *Trial* persisted in Postgres; each
+downloaded preview is an *Image* row. Has **username/password auth** (user-owned
 sessions) and **"Brivo"**, an app-wide **Gemini-powered voice agent** that drives
-the UI. See `README.md` for the full feature/usage write-up.
+the UI. The live EEN integration lives in `internal/brivo`. See `README.md` for the
+full feature/usage write-up.
+
+**Frontend flow:** Login → New Session (name + auth key only) → **Cameras** (grid;
+each tile async-downloads its latest preview) → Workspace (filmstrip of previews +
+Super-Res/Holistic). `SessionContext` holds `session` `{id,name,authKey}` and the
+separately-selected `camera` `{esn,name,anchorTs}`.
 
 ## Commands
 
@@ -74,16 +82,39 @@ holistic runs it inline.
   result. The `Processor` is passed into `server.New` so handlers can reach it.
   Note: `width`/`height` are not persisted on `trials`, so the async poll does not
   return them (add columns + a migration if needed).
-- **Dummy boundary (the part to replace for real data):**
-  - `internal/camera` synthesizes frames per `(ESN, timestamp)`, **softened** so the
-    stored frame looks low-res (the same capture feeds the filmstrip, main preview,
-    and super-res "before" — keep them consistent). Real camera fetch (ESN + auth
-    key) goes in `camera.ensureFrame` — marked with `LATER:` comments.
+- **EEN pipeline (`internal/brivo`) — the REAL camera/preview integration.**
+  Reusable, stateless client (auth key passed per call). Key exports: `IsKey` (does
+  the key contain `~`), `Cameras(authKey)` (GET `<cluster>/g/device/list`, cluster
+  host = `https://<prefix-before-~>.eagleeyenetworks.com`), `Archiver(authKey, esn)`
+  (archiver **health API** → highest-score node, 5-min cache), `FetchPreview(authKey,
+  archiver, esn, ts, mode)` where `mode` is `PrevMode`/`NextMode` — returns
+  `{Bytes, TS, PrevTS, NextTS}` read from the `x-ee-timestamp`/`x-ee-prev`/`x-ee-next`
+  headers (this is the walk primitive for the filmstrip). Timestamps are EEN format
+  `YYYYMMDDhhmmss.fff` (UTC) — `TimeLayout`, `Now()`, `ParseTS`.
+- **Async preview flow (`internal/server/previews.go`):**
+  - `POST /api/cameras {sessionId}` → `brivo.Cameras` → per camera create an `images`
+    row (`state=PROCESSING`, uuid id), return `{cameras[], images:{esn:imageId}}`,
+    and start `downloadPreviewAsync` (goroutine, bounded by `Server.dlSem`) which
+    picks the archiver, fetches the latest preview, writes it to
+    `sessions/{id}/images/{imageId}.jpeg`, and sets the row `SUCCESS`/`FAILURE`.
+  - UI polls `GET /api/image/status?imageId=` then loads `GET /api/images?imageId=`
+    (serves the JPEG, or `202` until ready).
+  - `POST /api/previews {sessionId, cameraEsn, aroundTs, direction, count}` walks
+    prev/next to fetch a window (`around` = anchor + N each side; `older`/`newer` for
+    filmstrip paging). Each fetched frame is saved as a SUCCESS `images` row.
+  - **Auth key resolution:** `resolveAuthKey(reqKey, sessionID)` prefers a request
+    key else falls back to the session's stored key — the frontend normally passes
+    only `sessionId`, keeping the key server-side.
+- **Dummy boundary (still stand-in):**
+  - `internal/camera` (legacy) synthesizes frames per `(ESN, timestamp)`, **softened**
+    so the stored frame looks low-res. Now only backs the legacy `/api/frames` route
+    (the UI uses `brivo` previews instead). `FetchFrames` ignores the auth key.
   - `internal/model` has an `Upscaler` interface; `DummyUpscaler` simulates detail
     recovery by regenerating the scene at high resolution (the soft source can't be
     sharpened into detail). It derives the scene seed from the capture path
-    (`seedFromPath`); non-generated/real frames fall back to sharpen-upscale. Swap a
-    real model in `model.NewEngine`.
+    (`seedFromPath`, which requires a `.png` suffix); **real `.jpg` previews from
+    `brivo` fall back to load → crop → sharpen-upscale**. Swap a real model in
+    `model.NewEngine`.
   - `imaging.GenerateFrame` uses **fractional** positions so the same seed renders an
     identical composition at any resolution (low-res capture vs high-res output align).
   - `imaging` is pure stdlib (no native deps) — keep it that way so it builds offline.
@@ -98,9 +129,9 @@ holistic runs it inline.
   in `components/VoiceAssistant.jsx` (browser STT/TTS); in-workspace actions flow
   through a **command queue** in `SessionContext` that `Workspace` consumes in order.
 
-## Goku — the AI agent (`internal/agent` + `/api/chat`)
+## Brivo — the AI agent (`internal/agent` + `/api/chat`)
 
-Goku is a conversational agent (Google Gemini) that **drives the UI**, not the
+Brivo is a conversational agent (Google Gemini) that **drives the UI**, not the
 backend. `internal/agent` sends the message history + a `Context` snapshot of the
 current app state to Gemini with `responseMimeType: application/json`, and parses
 back `{reply, actions[]}`. The backend returns that verbatim over `POST /api/chat`;
@@ -111,9 +142,9 @@ the **frontend executes the actions** (`create_session`, `select_frame`, `set_ro
   `internal/agent/agent.go`. Adding a UI capability means updating BOTH that prompt
   AND the action dispatcher in `frontend/src/components/VoiceAssistant.jsx` — they
   must agree on action names and param shapes.
-- No key → `Agent.Enabled()` is false and Goku returns a friendly "not configured"
+- No key → `Agent.Enabled()` is false and Brivo returns a friendly "not configured"
   reply; the rest of the app works normally. `GEMINI_MODEL` defaults to
-  `gemini-2.0-flash` (use `gemini-2.5-flash` for the free tier).
+  `gemini-2.0-flash` (use `gemini-2.5-flash-lite` for the biggest free quota).
 - **Super-Saiyan** is the `super_saiyan` action: renders a holistic result as an
   orbitable 3D scene (`frontend/src/components/Holistic3D.jsx`); requires a prior
   holistic run.
@@ -129,9 +160,14 @@ the **frontend executes the actions** (`create_session`, `select_frame`, `set_ro
   and applied on startup by `store.Migrate`. To change the schema, add a new numbered
   `*.up.sql`/`*.down.sql` pair; do not edit applied migrations.
 - Tables: **`trials`** (one row per enhancement), **`users`** (bcrypt), **`sessions`**
-  (user_id, name, auth_key, expires_at = +24h). All use `gorm.Model` for
-  `id/created_at/updated_at/deleted_at` — do not redeclare those columns. Migrations:
-  `000001_init` (trials), `000002_auth` (users, sessions).
+  (user_id, name, auth_key, expires_at = +24h), **`images`** (one row per downloaded
+  preview). Migrations: `000001_init` (trials), `000002_auth` (users, sessions),
+  `000003_images` (images). `trials`/`users`/`sessions` use `gorm.Model`
+  (`id/created_at/updated_at/deleted_at` — do not redeclare). **`images` is the
+  exception:** its `id` is a **TEXT uuid** (not a bigint) so the frontend can
+  reference a download before it completes — set it via `store.NewUUID()`, don't use
+  `gorm.Model`. Repo helpers: `CreateImage`, `GetImage`, `ImageDone(id,path,eenTs)`,
+  `ImageFailed(id,msg)`.
 - **State lifecycle**: `CREATED` → `PROCESSING` → `SUCCESS`/`FAILURE`.
   - **`super_res` is async** (return-then-poll): `POST /api/super-resolve` creates
     the trial as `CREATED`, enqueues it on the **HiRes processor** (`internal/hires`),

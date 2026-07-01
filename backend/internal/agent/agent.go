@@ -1,9 +1,9 @@
-// Package agent is "Goku" — the conversational brain. It sends the user's
+// Package agent is "Brivo" — the conversational brain. It sends the user's
 // message + conversation history + current app context to Google Gemini and
 // gets back a spoken reply plus a list of UI actions for the frontend to run.
 //
 // Gemini is asked to return strict JSON ({reply, actions[]}) via responseMimeType.
-// The frontend executes the actions (create_session, super_res, holistic, ...).
+// The frontend executes the actions (create_session, select_camera, super_res, ...).
 package agent
 
 import (
@@ -21,12 +21,14 @@ type Message struct {
 	Text string `json:"text"`
 }
 
-// Context is the current app state so Goku knows what it can do right now.
+// Context is the current app state so Brivo knows what it can do right now.
 type Context struct {
 	Route         string `json:"route"`
 	HasSession    bool   `json:"hasSession"`
 	SessionName   string `json:"sessionName"`
+	HasCamera     bool   `json:"hasCamera"`
 	CameraESN     string `json:"cameraEsn"`
+	CameraName    string `json:"cameraName"`
 	FrameCount    int    `json:"frameCount"`
 	FrameSelected bool   `json:"frameSelected"`
 	HasResult     bool   `json:"hasResult"`
@@ -73,8 +75,15 @@ Reply MUST be valid JSON of this exact shape:
 
 Keep "reply" short and conversational (it is spoken aloud). Use 0 or more actions.
 
+The workflow is: create a session (name + account auth key) -> the Cameras grid
+loads the account's cameras -> pick a camera to open the Workspace -> select a
+frame -> enhance. A "session" is now just a name + auth key; cameras and time are
+chosen on the Cameras page, NOT at session creation.
+
 Available actions (use only these "type" values):
-- "create_session": params {sessionName, cameraEsn, dateTime?}. Starts a session and opens the workspace. dateTime is optional ISO-8601; omit for "now".
+- "create_session": params {sessionName, authKey}. Creates the session and opens the Cameras grid. authKey is the account auth key and MUST come from the user — never invent it.
+- "open_cameras": params {}. Opens the camera grid for the current session.
+- "select_camera": params {cameraEsn, cameraName?, aroundTs?}. Opens that camera's workspace. aroundTs is an optional EEN timestamp (YYYYMMDDhhmmss.fff, UTC); omit for latest.
 - "select_frame": params {position: "first"|"middle"|"last"}. Picks a frame from the strip.
 - "set_roi": params {x, y, w, h} all normalized 0..1 (region of interest on the frame).
 - "clear_roi": params {}.
@@ -85,10 +94,11 @@ Available actions (use only these "type" values):
 - "go_home": params {}.
 
 Rules:
+- create_session needs an auth key from the user; if you don't have it, ask for it (empty actions).
+- select_camera needs a camera ESN; the available cameras are shown on the grid — ask the user which one if unsure. Never invent an ESN.
 - To run super_res/holistic/super_saiyan a frame must be selected; if none is selected, add a select_frame {position:"middle"} action first.
 - super_saiyan requires a holistic result; if there is none, you may add a holistic action before it.
-- If the user just chats or you need info, return a reply with an empty actions array and ask for what you need (e.g. camera ESN).
-- Never invent a camera ESN — ask for it if missing.
+- If the user just chats or you need info, return a reply with an empty actions array and ask for what you need.
 - Current app context will be provided; use it to decide what is possible.`
 
 // gemini wire types (minimal)

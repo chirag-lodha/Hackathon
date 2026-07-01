@@ -21,9 +21,12 @@ import (
 // falls back to pixel-based enhancement.
 func seedFromPath(rel string) (string, bool) {
 	parts := strings.Split(filepath.ToSlash(rel), "/")
-	if len(parts) >= 3 && parts[len(parts)-3] == "captures" {
+	// Only DUMMY captures (generated .png) are regenerated at high res. Real EEN
+	// previews are .jpg — those must be loaded and enhanced from actual pixels.
+	last := parts[len(parts)-1]
+	if len(parts) >= 3 && parts[len(parts)-3] == "captures" && strings.HasSuffix(last, ".png") {
 		esn := parts[len(parts)-2]
-		ms := strings.TrimSuffix(parts[len(parts)-1], ".png")
+		ms := strings.TrimSuffix(last, ".png")
 		if esn != "" && ms != "" {
 			return esn + "-" + ms, true
 		}

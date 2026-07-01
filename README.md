@@ -1,13 +1,16 @@
 # Brivo Lumina
 
-**AI camera super-resolution.** Pull a ±5-second window of frames from a camera,
-draw an optional region of interest, and enhance it to high resolution — or build
-a **holistic** multi-camera fused view of the same location. Every action is
-recorded as a *Trial* in Postgres and browsable in a history gallery.
+**AI camera super-resolution.** Enter an account auth key, browse its cameras,
+pull a window of preview frames around any moment, draw an optional region of
+interest, and enhance it to high resolution — or build a **holistic** multi-camera
+fused view of the same location. Every action is recorded as a *Trial* in Postgres
+and browsable in a history gallery.
 
-> Status: fully working end-to-end with **dummy** frames + a **stand-in**
-> super-resolution model. The real camera fetch and the real model plug in behind
-> clean interfaces (see [What's dummy vs real](#whats-dummy-vs-real)).
+> Status: **live Eagle Eye Networks (EEN) integration** — real cameras, real
+> preview frames (downloaded asynchronously), fed to a **stand-in** super-resolution
+> model. The EEN pipeline lives in its own `internal/brivo` package; the real
+> super-res model plugs in behind a clean `Upscaler` interface (see
+> [What's dummy vs real](#whats-dummy-vs-real)).
 
 ---
 
@@ -34,15 +37,18 @@ recorded as a *Trial* in Postgres and browsable in a history gallery.
 Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imagery.
 
 1. **Log in** (username/password — signup-or-login), then **start a session** —
-   give it a name, a camera ESN, and the camera auth key (stored against your
-   user for 24h), plus an optional moment in time.
-2. **Browse frames** — the backend returns a ±5s window of preview frames around
-   that moment; scroll the filmstrip left/right to fetch more in 5-second sets.
-3. **Enhance** — pick a frame, optionally draw a region of interest, then run:
+   give it a name and the account **auth key** (stored against your user for 24h).
+2. **Pick a camera** — the session loads every camera on the account into a grid;
+   each tile downloads its latest preview in the background (shows a loader, then
+   the live thumbnail). Optionally choose a date & time, then open a camera.
+3. **Browse frames** — the backend walks the archiver's prev/next preview links to
+   return a window of frames around that moment; scroll the filmstrip left/right to
+   fetch more.
+4. **Enhance** — pick a frame, optionally draw a region of interest, then run:
    - **Super-Res** — enhance that frame (or just the ROI) to high resolution.
    - **Holistic View** — fuse every camera pointing at the same location into one
      wide, high-res composite.
-4. **Review history** — every enhancement is stored and shown in a gallery you can
+5. **Review history** — every enhancement is stored and shown in a gallery you can
    scroll through and open full-screen (before/after compare for super-res, the
    composite + contributing cameras for holistic).
 
@@ -52,16 +58,17 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 
 ```
                 ┌──────────────────────────────────────────────┐
-   Browser      │                React SPA (Vite)              │
-  ┌────────┐    │  Landing → New Session → Workspace → History │
-  │  UI    │◄──►│  ROI draw · filmstrip · compare slider · ... │
-  └────────┘    └───────────────┬──────────────────────────────┘
+   Browser      │                React SPA (Vite)                    │
+  ┌────────┐    │  Landing → New Session → Cameras → Workspace → Hist │
+  │  UI    │◄──►│  camera grid · ROI draw · filmstrip · compare · ... │
+  └────────┘    └───────────────┬────────────────────────────────────┘
        │ HTTP (JSON + image URLs)│
        ▼                         ▼
   ┌─────────────────────────────────────────────────────────────┐
   │                     Go backend (net/http)                    │
   │  server/   router · CORS · logging · SPA + /files static     │
-  │  camera/   frame source  (dummy now → real ESN/authKey API)  │
+  │  brivo/    EEN pipeline: cameras · archiver health · previews │
+  │  camera/   dummy frame source (legacy /api/frames fallback)  │
   │  model/    Upscaler iface · DummyUpscaler · holistic fusion  │
   │  imaging/  resize · crop · enhance · composite (pure stdlib)  │
   │  store/    images + Postgres (GORM repo, migrations, models) │
@@ -71,9 +78,23 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
                   ▼                             ▼
         ┌──────────────────┐         ┌────────────────────────┐
         │  Postgres        │         │  Filesystem / volume    │
-        │  trials table    │         │  captures/  outputs/    │
+        │ trials · images  │         │ sessions/…/images/ etc. │
         └──────────────────┘         └────────────────────────┘
 ```
+
+**Preview flow (async download → poll → serve):**
+
+1. `POST /api/cameras {sessionId}` → `brivo.Cameras(authKey)` lists the account's
+   cameras. For each, the server creates an `images` row (`state = PROCESSING`),
+   returns a **uuid `imageId`** per camera, and kicks off a background goroutine
+   (bounded by a semaphore) that picks the healthiest **archiver**
+   (`brivo.Archiver`), downloads the latest preview (`brivo.FetchPreview`), writes
+   it to `sessions/{id}/images/{imageId}.jpeg`, and flips the row to `SUCCESS`.
+2. The UI polls `GET /api/image/status?imageId=…` until `SUCCESS`/`FAILURE`, then
+   loads the image from `GET /api/images?imageId=…`.
+3. Opening a camera calls `POST /api/previews` which walks the archiver's
+   `prev`/`next` links (`x-ee-prev` / `x-ee-next` headers) to fetch N frames around
+   the chosen moment; scrolling the filmstrip fetches more `older`/`newer`.
 
 **Request flow for a super-res enhancement (async, return-then-poll):**
 
@@ -120,19 +141,22 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
    username creates an account; an existing one logs you in. You stay signed in via
    a cookie; log out from the Landing top-right.
 2. **Landing** — choose **New capture** or **History**.
-3. **New session** — *Session name*, *Camera ESN* and *Auth key* are required
-   (*Date & time* defaults to now). The session (name + auth key) is stored against
-   your user for 24h, then frames are fetched.
-4. **Workspace**
-   - The **filmstrip** at the bottom holds the ±5s window; scroll to either edge to
-     load the next 5-second set in that direction.
+3. **New session** — only *Session name* and the account *Auth key* are required.
+   The session (name + auth key) is stored against your user for 24h.
+4. **Cameras** — the account's cameras load into a grid; each tile shows a loader
+   while its latest preview downloads, then the live thumbnail (offline cameras are
+   marked and unclickable). Optionally set a *Date & time* (defaults to latest),
+   then click a camera to open it.
+5. **Workspace**
+   - The **filmstrip** at the bottom holds the frames fetched around the chosen
+     moment; scroll to either edge to walk the archiver's prev/next links for more.
    - Click a frame to load it into the stage. **Drag on the image** to draw an ROI
      rectangle (drag again to redraw; *Clear* to remove → enhances the full frame).
    - Click **Super-Res** or **Holistic View**. The result appears in the right
      panel. **Changing the ROI re-runs the current operation automatically.**
    - Super-res shows a **before/after compare slider**; holistic shows the fused
      image plus thumbnails of the contributing cameras.
-5. **History** — a gallery of all successful conversions (newest first), with filter
+6. **History** — a gallery of all successful conversions (newest first), with filter
    tabs (All / Super-Res / Holistic). Click any card to open the **full-screen
    viewer**; navigate with the on-screen arrows or **←/→**, close with **Esc**.
 
@@ -142,10 +166,15 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 
 - **Accounts** — username/password login (one button = signup-or-login), cookie
   session, and **user-owned sessions** (name + camera auth key, valid 24h)
+- **Live EEN integration** (`internal/brivo`) — list an account's real cameras,
+  pick the healthiest archiver per camera, and download real preview frames; the
+  auth key lives server-side with the session (the UI only passes `sessionId`)
+- **Async preview downloads** — cameras return immediately with a per-camera
+  `imageId`; previews download on background goroutines and the UI polls status
 - **Brivo voice assistant** — a Gemini-powered agent (hands-free voice or typed)
   that drives the whole UI: sessions, frame select, ROI, Super-Res, Holistic, 3D
-- Landing, Login, New Session (with validation), Workspace, and History pages
-- ±5s frame window with **infinite filmstrip paging** (both directions, de-duped)
+- Landing, Login, New Session, Camera grid, Workspace, and History pages
+- Frame window with **infinite filmstrip paging** (walks prev/next, de-duped)
 - **ROI drawing** on the source frame (normalized, resolution-independent)
 - **Super-Res** and **Holistic View** operations, with auto re-run on ROI change
 - **Before/after compare slider** and holistic composite + source cameras
@@ -165,12 +194,15 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 
 ## Pending / roadmap
 
-- **Real camera integration** — fetch actual frames via ESN + auth key (stubbed)
-- **Real super-resolution model** — replace `DummyUpscaler` (implement `Upscaler`)
+- ✅ **Real camera integration** — done: `internal/brivo` lists real cameras and
+  downloads real preview frames via the account auth key + archiver health API
+- **Real super-resolution model** — replace `DummyUpscaler` (implement `Upscaler`);
+  real JPEG previews currently get a load → sharpen-upscale pass
 - **Real holistic logic** — resolve the actual co-located cameras and fuse them
-- **Async processing** — done for super-res (`202` + poll `GET /api/trials/{id}`).
-  Still pending: make holistic (`/api/alternate`) async too, and update the frontend
-  `client.js` to poll (it currently expects a synchronous super-res response)
+- **Async processing** — super-res is fully async end-to-end: backend returns `202`
+  + `CREATED`, and the frontend (`client.js` `superResolve`) polls
+  `GET /api/trials/{id}` (showing "we're working on it") until `SUCCESS`, then renders
+  the high-res image. Still pending: make holistic (`/api/alternate`) async too.
 - **Trials not yet user-scoped** — login + user-owned sessions exist, but `trials`
   (history) aren't linked to `user_id` yet, so history is global. The `delete`
   endpoints are *hidden*, **not secured**.
@@ -209,6 +241,23 @@ by golang-migrate on startup. The GORM struct in `backend/internal/store/models.
 maps to it for queries only. (Postgres access lives in the `store` package — see
 `store/postgres.go`, `store/repo.go`.)
 
+### `images` (preview downloads)
+
+One row per downloaded preview frame (`000003_images`). The `id` is a **uuid**
+(not a bigint) so the frontend can reference the download before it finishes.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | text PK | uuid (v4) |
+| `created_at` / `updated_at` | timestamptz | |
+| `session_id` | bigint | owning session |
+| `camera_esn` | text | source camera |
+| `een_ts` | text | EEN timestamp of the frame (`YYYYMMDDhhmmss.fff`) |
+| `kind` | text | e.g. `preview` |
+| `state` | text | `PROCESSING` / `SUCCESS` / `FAILURE` |
+| `path` | text | on-disk path once downloaded |
+| `error` | text | message on FAILURE |
+
 ---
 
 ## API reference
@@ -217,7 +266,10 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 
 | Method | Endpoint | Body | Returns |
 |--------|----------|------|---------|
-| POST | `/api/frames` | `{sessionName, cameraEsn, anchorTime?, authKey?, direction, cursor?}` | `{frames[], cursors}` — ±5s window |
+| POST | `/api/cameras` | `{sessionId, authKey?}` | `{cameras:[{esn,name,location,status,imageId}], images:{esn:imageId}}` — lists account cameras; kicks off latest-preview downloads |
+| POST | `/api/previews` | `{sessionId, cameraEsn, aroundTs?, direction?, count?, authKey?}` | `{previews:[{imageId,ts,state}], oldestTs, newestTs}` — walks prev/next; `direction` = `around`/`older`/`newer` |
+| GET | `/api/image/status` | `?imageId=` | `{id, state, ts, error?}` — poll a preview download |
+| GET | `/api/images` | `?imageId=` | the downloaded preview JPEG (or `202` if not ready) |
 | POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?}` | **`202`** `{id, type, state:"CREATED", roi}` — enqueued; poll for the result |
 | GET | `/api/trials/{id}` | — | `{id, type, state, imageUrl?, sourceUrl?, scale?, sources?, roi, ms, error?}` — poll an async trial |
 | POST | `/api/alternate` | `{imagePath, cameraEsn, sessionName?, ..., roi?}` | `{id, state, imageUrl, sources[], ms}` — holistic (synchronous) |
@@ -232,7 +284,13 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 | GET | `/api/health` | — | `{status:"ok"}` |
 
 `roi` is normalized `{x, y, w, h}` in `[0,1]` (stored as two-point `coords`).
-`direction` is `around` (initial), `left`, or `right` (paging via `cursor`).
+For `/api/previews`, `direction` is `around` (anchor + N each side), `older`, or
+`newer` (paging via the `oldestTs`/`newestTs` cursors). `aroundTs` is an EEN
+timestamp `YYYYMMDDhhmmss.fff` (UTC); empty = latest. `authKey` is optional on all
+EEN endpoints — if omitted, the key stored on the session is used.
+
+> The legacy `POST /api/frames` (dummy synthesized window, `internal/camera`)
+> remains registered as a fallback but is no longer used by the UI.
 
 ---
 
@@ -275,17 +333,19 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
 
 ## What's dummy vs real
 
-- **Frames** (`internal/camera`): synthesized deterministically per `(ESN, timestamp)`,
-  **softened to look genuinely low-res**, and cached to `data/captures/`. The same
-  capture is used for the filmstrip, the main preview, and the super-res "before",
-  so all previews match. **Later:** fetch real frames using the camera ESN + auth
-  key — only `camera.ensureFrame` changes.
-- **Super-resolution** (`internal/model`): the low-res source is intentionally soft,
-  so `DummyUpscaler` simulates detail recovery by **regenerating the same scene at
-  high resolution** (crisp) for generated frames — upscaling the soft pixels would
-  just yield a bigger blur — and falls back to a sharpen-upscale for real frames.
-  Output is cropped to the ROI and written to `data/outputs/`. **Later:** implement
-  the `Upscaler` interface with a real model and swap it in `NewEngine`.
+- **Cameras & preview frames** (`internal/brivo`): **real** — this package is the
+  reusable EEN pipeline. `Cameras(authKey)` lists the account's cameras (legacy
+  `/g/device/list` cookie auth on the cluster host derived from the `cXXX~` key
+  prefix); `Archiver(esn)` polls the archiver health API and picks the highest-score
+  node (5-min cached); `FetchPreview(...)` downloads `/asset/prev|next/image.jpeg`
+  and reads the `x-ee-timestamp` / `x-ee-prev` / `x-ee-next` headers to walk frames.
+  Downloaded JPEGs are stored under `data/sessions/{id}/images/`. The old dummy
+  synthesizer in `internal/camera` is kept only for the legacy `/api/frames` route.
+- **Super-resolution** (`internal/model`): still a **stand-in**. `DummyUpscaler`
+  regenerates *generated* `.png` scenes at high resolution (a soft source can't be
+  sharpened into detail), and for **real `.jpg` previews** falls back to a load →
+  crop → sharpen-upscale pass. Output is written to `data/outputs/`. **Later:**
+  implement the `Upscaler` interface with a real model and swap it in `NewEngine`.
 - **Holistic** (`internal/model`): derives co-located cameras from the ESN and
   composites enhanced views. **Later:** resolve the real camera set for the location
   and fuse their frames.
@@ -300,8 +360,8 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
 | `LUMINA_DATA_DIR` | `data` | root for `captures/` and `outputs/` image files |
 | `LUMINA_FRONTEND_DIR` | _(empty)_ | built UI dir; serves the SPA when set |
 | `LUMINA_SR_SCALE` | `4` | super-resolution upscale factor |
-| `LUMINA_CAMERA_API` | _(empty)_ | upstream camera/VMS base URL (later) |
-| `LUMINA_CAMERA_AUTHKEY` | _(empty)_ | default camera auth key (later) |
+| `LUMINA_CAMERA_API` | _(empty)_ | optional override for the camera/VMS base URL (unused by `brivo`, which derives the cluster host from the auth key's `cXXX~` prefix) |
+| `LUMINA_CAMERA_AUTHKEY` | _(empty)_ | optional fallback auth key (normally the key comes from the user's session) |
 | `DATABASE_URL` | `postgres://lumina:lumina@localhost:5433/lumina?sslmode=disable` | Postgres connection |
 | `LUMINA_AUTH_SECRET` | `lumina-dev-secret-change-me` | signs the login cookie (set in prod) |
 | `GEMINI_API_KEY` | _(empty)_ | Brivo AI assistant — free key from Google AI Studio |
@@ -318,15 +378,15 @@ hackathon/
 ├── scripts/dev.sh          # local dev: Postgres + backend + frontend together
 ├── frontend/               # React + Vite UI
 │   ├── src/
-│   │   ├── pages/          # Landing, NewSession, Workspace, History
+│   │   ├── pages/          # Landing, NewSession, CameraSelect, Workspace, History
 │   │   ├── components/     # Filmstrip, RoiCanvas, ResultViewer, Compare, ...
-│   │   ├── context/        # SessionContext (+ hidden-admin secret listener)
+│   │   ├── context/        # SessionContext (session + camera + hidden-admin listener)
 │   │   └── api/            # client.js (USE_MOCK flag) + mock.js
 │   └── vite.config.js      # dev proxy → backend
 └── backend/                # Go API + image pipeline
     ├── main.go
     └── internal/
-        ├── config/  types/  imaging/  camera/  model/  agent/  hires/  server/
+        ├── config/ types/ imaging/ brivo/ camera/ model/ agent/ hires/ server/
         └── store/  (image layout + Postgres: models, repo, migrations/*.sql)
 ```
 

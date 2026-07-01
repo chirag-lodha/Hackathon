@@ -3,6 +3,7 @@ import { AnimatePresence } from 'framer-motion'
 import Landing from './pages/Landing.jsx'
 import Login from './pages/Login.jsx'
 import NewSession from './pages/NewSession.jsx'
+import CameraSelect from './pages/CameraSelect.jsx'
 import Workspace from './pages/Workspace.jsx'
 import History from './pages/History.jsx'
 import VoiceAssistant from './components/VoiceAssistant.jsx'
@@ -38,6 +39,7 @@ export default function App() {
         <Routes location={location} key={location.pathname}>
           <Route path="/" element={<Landing />} />
           <Route path="/new" element={<NewSession />} />
+          <Route path="/cameras" element={<CameraSelect />} />
           <Route path="/workspace" element={<Workspace />} />
           <Route path="/history" element={<History />} />
           <Route path="/login" element={<Navigate to="/" replace />} />

@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"image"
 	"image/color"
+	_ "image/jpeg" // register JPEG decoder (real EEN previews are .jpg)
 	"image/png"
 	"math"
 	"os"
@@ -334,5 +335,6 @@ func LoadPNG(path string) (image.Image, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return png.Decode(f)
+	img, _, err := image.Decode(f) // decodes PNG or JPEG (both registered)
+	return img, err
 }

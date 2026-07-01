@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Mic, X, Bot, Loader2, Volume2, Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext.jsx'
-import { fetchFrames, chatAgent } from '../api/client.js'
+import { createSession, chatAgent } from '../api/client.js'
 
 /**
  * "Brivo" — a Gemini-powered voice agent. It listens (browser STT), sends the
@@ -21,7 +21,7 @@ let welcomeSpoken = false
 export default function VoiceAssistant() {
   const nav = useNavigate()
   const loc = useLocation()
-  const { session, setSession, addHistory, dispatchCommand, workspaceStatus } = useSession()
+  const { session, setSession, camera, setCamera, addHistory, dispatchCommand, workspaceStatus } = useSession()
 
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState([]) // {role:'user'|'model', text}
@@ -41,6 +41,8 @@ export default function VoiceAssistant() {
   messagesRef.current = messages
   const sessionRef = useRef(session)
   sessionRef.current = session
+  const cameraRef = useRef(camera)
+  cameraRef.current = camera
   const wsRef = useRef(workspaceStatus)
   wsRef.current = workspaceStatus
 
@@ -97,13 +99,16 @@ export default function VoiceAssistant() {
 
   const buildContext = () => {
     const s = sessionRef.current
+    const c = cameraRef.current
     const ws = wsRef.current || {}
     return {
       route: loc.pathname,
       hasSession: !!s,
-      sessionName: s?.sessionName || '',
-      cameraEsn: s?.cameraEsn || '',
-      frameCount: ws.frameCount ?? (s?.initialFrames?.length || 0),
+      sessionName: s?.name || '',
+      hasCamera: !!c,
+      cameraEsn: c?.esn || '',
+      cameraName: c?.name || '',
+      frameCount: ws.frameCount ?? 0,
       frameSelected: !!ws.frameSelected,
       hasResult: !!ws.hasResult,
       mode: ws.mode || '',
@@ -115,27 +120,27 @@ export default function VoiceAssistant() {
     const p = action.params || {}
     switch (action.type) {
       case 'create_session': {
+        // New flow: a session is just a name + account auth key; the cameras page
+        // loads next. The auth key must be provided (spoken/typed) by the user.
+        if (!p.authKey) return
+        const name = (p.sessionName || 'Voice session').trim()
+        const authKey = String(p.authKey).trim()
+        const res = await createSession(name, authKey) // { id, name }
+        setSession({ id: res.id, name, authKey })
+        setCamera(null)
+        addHistory({ type: 'session', createdAt: new Date().toISOString(), sessionName: name })
+        nav('/cameras')
+        break
+      }
+      case 'select_camera': {
+        // Open a specific camera by ESN (the cameras grid feeds ESNs into context).
         if (!p.cameraEsn) return
-        const anchorTime = p.dateTime ? new Date(p.dateTime).toISOString() : null
-        const result = await fetchFrames({
-          sessionName: (p.sessionName || 'Voice session').trim(),
-          cameraEsn: String(p.cameraEsn).trim(),
-          anchorTime,
-          direction: 'around',
-        })
-        const data = {
-          sessionName: (p.sessionName || 'Voice session').trim(),
-          cameraEsn: String(p.cameraEsn).trim(),
-          anchorTime: anchorTime || new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-          initialFrames: result.frames,
-          cursors: result.cursors,
-        }
-        setSession(data)
-        addHistory({ type: 'session', createdAt: data.createdAt, sessionName: data.sessionName, cameraEsn: data.cameraEsn, anchorTime: data.anchorTime, frameCount: result.frames.length })
+        const esn = String(p.cameraEsn).trim()
+        setCamera({ esn, name: p.cameraName || esn, anchorTs: p.aroundTs || '' })
         nav('/workspace')
         break
       }
+      case 'open_cameras': nav('/cameras'); break
       case 'open_history': nav('/history'); break
       case 'go_home': nav('/'); break
       // in-workspace actions → command bus (Workspace executes)
@@ -151,7 +156,7 @@ export default function VoiceAssistant() {
       default:
         break
     }
-  }, [loc.pathname, nav, setSession, addHistory, dispatchCommand])
+  }, [loc.pathname, nav, setSession, setCamera, addHistory, dispatchCommand])
 
   // ---- one turn: send user text to Gemini, speak reply, run actions ----
   const sendToAgent = useCallback(async (userText) => {

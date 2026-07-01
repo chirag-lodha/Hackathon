@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"lumina/internal/agent"
+	"lumina/internal/brivo"
 	"lumina/internal/camera"
 	"lumina/internal/config"
 	"lumina/internal/hires"
@@ -54,7 +55,9 @@ func main() {
 	hp := hires.New(eng, repo)
 	hp.Init()
 
-	srv := server.New(cfg, st, cam, eng, repo, ag, hp)
+	bv := brivo.New() // Eagle Eye Networks pipeline (cameras + previews)
+
+	srv := server.New(cfg, st, cam, eng, repo, ag, hp, bv)
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,

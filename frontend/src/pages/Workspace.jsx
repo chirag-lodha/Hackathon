@@ -8,7 +8,7 @@ import RoiCanvas from '../components/RoiCanvas.jsx'
 import ResultViewer from '../components/ResultViewer.jsx'
 import Holistic3D from '../components/Holistic3D.jsx'
 import { useSession } from '../context/SessionContext.jsx'
-import { fetchFrames, superResolve, alternateOperation } from '../api/client.js'
+import { superResolve, alternateOperation, fetchPreviews, imageURL } from '../api/client.js'
 
 const fade = {
   initial: { opacity: 0 },
@@ -16,12 +16,40 @@ const fade = {
   exit: { opacity: 0 },
 }
 
+// Friendly messages for the async super-res states.
+const STATE_MSG = {
+  CREATED: 'Queued — starting up…',
+  PROCESSING: "Enhancing — we're working on it…",
+  SUCCESS: 'Done!',
+  FAILURE: 'Failed',
+}
+
+const PREVIEW_NEIGHBORS = 3 // frames per side fetched on open / scroll
+
+// Human label from an EEN timestamp (YYYYMMDDhhmmss.fff, UTC).
+function eenLabel(ts) {
+  const m = /^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)/.exec(ts || '')
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : ts || ''
+}
+
+// Map an API preview {imageId, ts} to a filmstrip frame.
+function previewToFrame(sessionId, p) {
+  return {
+    id: p.imageId,
+    path: `sessions/${sessionId}/images/${p.imageId}.jpeg`, // source path for super-res
+    thumb: imageURL(p.imageId),
+    timestamp: p.ts,
+    label: eenLabel(p.ts),
+  }
+}
+
 export default function Workspace() {
   const nav = useNavigate()
-  const { session, addHistory, commandQueue, shiftCommand, dispatchCommand, setWorkspaceStatus } = useSession()
+  const { session, camera, addHistory, commandQueue, shiftCommand, dispatchCommand, setWorkspaceStatus } = useSession()
 
-  const [frames, setFrames] = useState(session?.initialFrames || [])
-  const [cursors, setCursors] = useState(session?.cursors || null)
+  const [frames, setFrames] = useState([])
+  const [cursors, setCursors] = useState(null)
+  const [initialLoading, setInitialLoading] = useState(true)
   const [loadingLeft, setLoadingLeft] = useState(false)
   const [loadingRight, setLoadingRight] = useState(false)
 
@@ -31,14 +59,38 @@ export default function Workspace() {
   const [result, setResult] = useState(null)
   const [resultLoading, setResultLoading] = useState(false)
   const [resultError, setResultError] = useState(null)
+  const [procNote, setProcNote] = useState('') // live async status message
   // Super-Saiyan: show the holistic result as an orbitable 3D scene in the stage.
   const [superSaiyan, setSuperSaiyan] = useState(false)
 
-  const seenIds = useRef(new Set((session?.initialFrames || []).map((f) => f.id)))
+  const seenIds = useRef(new Set())
 
+  // Route guards: need a session (id) and a selected camera.
   useEffect(() => {
     if (!session) nav('/new', { replace: true })
-  }, [session, nav])
+    else if (!camera) nav('/cameras', { replace: true })
+  }, [session, camera, nav])
+
+  // Initial load: fetch previews around the chosen moment (or latest) and
+  // auto-select the anchor frame so a preview is visible right away.
+  useEffect(() => {
+    if (!session || !camera) return
+    let alive = true
+    setInitialLoading(true)
+    fetchPreviews({ sessionId: session.id, cameraEsn: camera.esn, aroundTs: camera.anchorTs || '', direction: 'around', count: PREVIEW_NEIGHBORS })
+      .then((res) => {
+        if (!alive) return
+        const fr = (res.previews || []).map((p) => previewToFrame(session.id, p))
+        fr.forEach((f) => seenIds.current.add(f.id))
+        setFrames(fr)
+        setCursors({ left: res.oldestTs, right: res.newestTs })
+        if (fr.length) selectFrame(fr[Math.floor(fr.length / 2)])
+      })
+      .catch((e) => setResultError(e.message))
+      .finally(() => alive && setInitialLoading(false))
+    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, camera])
 
   const loadMore = useCallback(
     async (direction) => {
@@ -47,27 +99,27 @@ export default function Workspace() {
       if (direction === 'right' && loadingRight) return
       direction === 'left' ? setLoadingLeft(true) : setLoadingRight(true)
       try {
-        const res = await fetchFrames({
-          sessionName: session.sessionName,
-          cameraEsn: session.cameraEsn,
-          direction,
-          cursor: direction === 'left' ? cursors.left : cursors.right,
-          authKey: session.authKey || undefined,
+        const res = await fetchPreviews({
+          sessionId: session.id,
+          cameraEsn: camera.esn,
+          aroundTs: direction === 'left' ? cursors.left : cursors.right,
+          direction: direction === 'left' ? 'older' : 'newer',
+          count: PREVIEW_NEIGHBORS,
         })
-        const fresh = res.frames.filter((f) => !seenIds.current.has(f.id))
+        const fresh = (res.previews || []).map((p) => previewToFrame(session.id, p)).filter((f) => !seenIds.current.has(f.id))
         fresh.forEach((f) => seenIds.current.add(f.id))
         if (fresh.length) {
           setFrames((prev) => (direction === 'left' ? [...fresh, ...prev] : [...prev, ...fresh]))
           setCursors((c) => ({
-            left: direction === 'left' ? res.cursors.left : c.left,
-            right: direction === 'right' ? res.cursors.right : c.right,
+            left: direction === 'left' ? res.oldestTs : c.left,
+            right: direction === 'right' ? res.newestTs : c.right,
           }))
         }
       } finally {
         direction === 'left' ? setLoadingLeft(false) : setLoadingRight(false)
       }
     },
-    [cursors, session, loadingLeft, loadingRight],
+    [cursors, session, camera, loadingLeft, loadingRight],
   )
 
   const selectFrame = (f) => {
@@ -102,23 +154,28 @@ export default function Workspace() {
       setResultLoading(true)
       setResultError(null)
       setResult(null)
+      setProcNote(op === 'holistic' ? '' : 'Queued…')
       try {
-        const fn = op === 'holistic' ? alternateOperation : superResolve
-        const res = await fn({
+        const params = {
           imagePath: selected.path,
-          cameraEsn: session.cameraEsn,
-          sessionName: session.sessionName,
+          cameraEsn: camera.esn,
+          sessionName: session.name,
           frameTimestamp: selected.timestamp,
           frameLabel: selected.label,
           roi,
-        })
+        }
+        // Super-res is async: submit → poll → SUCCESS. Holistic is synchronous.
+        const res =
+          op === 'holistic'
+            ? await alternateOperation(params)
+            : await superResolve(params, (state) => setProcNote(STATE_MSG[state] || state))
         setResult(res)
         addHistory({
           // full payload so the History gallery can render the viewer offline
           ...res,
           createdAt: new Date().toISOString(),
-          sessionName: session.sessionName,
-          cameraEsn: session.cameraEsn,
+          sessionName: session.name,
+          cameraEsn: camera.esn,
           framePath: selected.path,
           frameLabel: selected.label,
           roi,
@@ -128,9 +185,10 @@ export default function Workspace() {
         setResultError(err.message || 'Inference failed')
       } finally {
         setResultLoading(false)
+        setProcNote('')
       }
     },
-    [selected, roi, session, addHistory],
+    [selected, roi, session, camera, addHistory],
   )
 
   // Re-run automatically when the ROI changes after a result already exists,
@@ -187,19 +245,19 @@ export default function Workspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commandQueue])
 
-  if (!session) return null
+  if (!session || !camera) return null
 
   return (
     <motion.div className="ws" variants={fade} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.3 }}>
       <header className="ws-top">
         <div className="ws-top-left">
-          <button className="btn btn-ghost" onClick={() => nav('/')}><ArrowLeft size={18} /></button>
+          <button className="btn btn-ghost" onClick={() => nav('/cameras')}><ArrowLeft size={18} /></button>
           <Logo size={32} withWordmark={false} />
           <div className="ws-session">
-            <strong>{session.sessionName}</strong>
+            <strong>{camera.name || session.name}</strong>
             <div className="ws-session-meta">
-              <span><Cctv size={12} /> {session.cameraEsn}</span>
-              <span><Clock size={12} /> {new Date(session.anchorTime).toLocaleString()}</span>
+              <span><Cctv size={12} /> {camera.esn}</span>
+              <span><Clock size={12} /> {camera.anchorTs ? eenLabel(camera.anchorTs) : 'Latest'}</span>
             </div>
           </div>
         </div>
@@ -224,11 +282,17 @@ export default function Workspace() {
             )
           ) : selected ? (
             <RoiCanvas src={selected.thumb} roi={roi} onChange={setRoi} />
+          ) : initialLoading ? (
+            <div className="ws-stage-empty">
+              <Loader2 size={30} className="spin-ico" />
+              <h3>Loading previews…</h3>
+              <p>Pulling frames around this moment from the camera.</p>
+            </div>
           ) : (
             <div className="ws-stage-empty">
               <div className="ws-empty-ico"><ImageIcon size={30} /></div>
-              <h3>Select a frame</h3>
-              <p>Pick a frame from the strip below to inspect and enhance it.</p>
+              <h3>No frames available</h3>
+              <p>This camera has no footage at this time. Try another camera or time.</p>
             </div>
           )}
           {selected && !superSaiyan && (
@@ -288,7 +352,7 @@ export default function Workspace() {
                 </div>
 
                 <div className="ws-result">
-                  <ResultViewer mode={mode} loading={resultLoading} result={result} error={resultError} />
+                  <ResultViewer mode={mode} loading={resultLoading} note={procNote} result={result} error={resultError} />
                 </div>
               </div>
             </motion.aside>
@@ -315,6 +379,7 @@ export default function Workspace() {
         .ws-session strong { font-size: 15px; }
         .ws-session-meta { display: flex; gap: 14px; font-size: 12px; color: var(--text-2); }
         .ws-session-meta span { display: inline-flex; align-items: center; gap: 5px; }
+        .ws .spin-ico { animation: spin .7s linear infinite; }
 
         .ws-body { flex: 1; display: flex; gap: 16px; padding: 16px 22px 0; min-height: 0; }
         .ws-stage { flex: 1; min-width: 0; position: relative; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }

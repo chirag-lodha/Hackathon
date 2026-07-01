@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"lumina/internal/agent"
+	"lumina/internal/brivo"
 	"lumina/internal/camera"
 	"lumina/internal/config"
 	"lumina/internal/hires"
@@ -24,10 +25,12 @@ type Server struct {
 	repo   *store.Repo
 	agent  *agent.Agent
 	hires  *hires.Processor
+	brivo  *brivo.Client
+	dlSem  chan struct{} // bounds concurrent preview downloads
 }
 
-func New(cfg *config.Config, st *store.Store, cam *camera.Client, eng *model.Engine, repo *store.Repo, ag *agent.Agent, hp *hires.Processor) *Server {
-	return &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag, hires: hp}
+func New(cfg *config.Config, st *store.Store, cam *camera.Client, eng *model.Engine, repo *store.Repo, ag *agent.Agent, hp *hires.Processor, bv *brivo.Client) *Server {
+	return &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag, hires: hp, brivo: bv, dlSem: make(chan struct{}, 12)}
 }
 
 // Handler builds the full http.Handler (routes + middleware).
@@ -47,6 +50,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/me", s.handleMe)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+	mux.HandleFunc("POST /api/cameras", s.handleCameras)
+	mux.HandleFunc("POST /api/previews", s.handlePreviews)
+	mux.HandleFunc("GET /api/image/status", s.handleImageStatus)
+	mux.HandleFunc("GET /api/images", s.handleServeImage)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 
 	// Static: generated/processed images.

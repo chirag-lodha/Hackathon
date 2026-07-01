@@ -43,7 +43,9 @@ func New(cfg *config.Config, st *store.Store) *Client {
 	return &Client{cfg: cfg, store: st}
 }
 
-// FetchFrames returns one ±5s set of frames for the given camera.
+// FetchFrames returns one ±5s set of synthesized (dummy) frames for the given
+// camera — used for non-EEN test keys. Real EEN previews come from the brivo
+// pipeline via /api/cameras + /api/previews.
 //
 // direction:
 //   - "around": centered on anchor (or now if anchor is zero)
@@ -53,11 +55,6 @@ func (c *Client) FetchFrames(esn, authKey string, anchor time.Time, direction st
 	if esn == "" {
 		return types.FramesResponse{}, fmt.Errorf("camera ESN is required")
 	}
-
-	// --- LATER: real integration ---
-	// key := authKey; if key == "" { key = c.cfg.CameraAuthKey }
-	// resp, err := http.Get(c.cfg.CameraAPIBase + "/frames?esn=" + esn + "&from=...&to=...&token=" + key)
-	// ...decode real frame timestamps + image bytes, store them, and skip generation.
 	_ = authKey
 
 	total := windowSeconds*2*fps + 1 // 21
