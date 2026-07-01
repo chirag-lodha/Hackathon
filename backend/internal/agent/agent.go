@@ -331,7 +331,9 @@ type SceneImage struct {
 }
 
 const groupPrompt = `You are given still frames from several security cameras, each labeled "Camera <id>:" just before its image.
-Group the cameras that are physically at the SAME location / show the SAME scene (same room, corridor, street, parking area, entrance — they may be different angles of that same place). Cameras showing clearly DIFFERENT places belong to different groups.
+Group ONLY the cameras that are clearly monitoring the SAME physical place — the exact same room, corridor, doorway, parking area or street — possibly from different angles, ideally with overlapping or adjacent fields of view (you can see the same objects, walls, or landmarks).
+Do NOT group cameras merely because they look visually similar or are the same TYPE of place. Two different offices, two different hallways, or two unrelated rooms are DIFFERENT locations and MUST go in separate groups, even if they look alike.
+When in doubt, keep a camera in its own group.
 Return ONLY JSON of this exact shape: {"groups": [["<id>", "<id>"], ["<id>"]]}. Every camera id you were given must appear in exactly one group. Use the exact ids provided.`
 
 // GroupByScene sends every camera's frame to Gemini vision in one call and asks

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Cctv, Wifi, WifiOff, LayoutGrid, Loader2, ImageOff } from 'lucide-react'
+import { Cctv, Wifi, WifiOff, LayoutGrid, Loader2, ImageOff, Sparkles, MapPin } from 'lucide-react'
 import { fetchLocationCameras, imageStatus, imageURL } from '../api/client.js'
 
 /**
@@ -12,6 +12,7 @@ import { fetchLocationCameras, imageStatus, imageURL } from '../api/client.js'
 export default function CommandView({ sessionId, cameraEsn, aroundTs, moment }) {
   const [cams, setCams] = useState([])
   const [location, setLocation] = useState('')
+  const [groupedBy, setGroupedBy] = useState('') // 'scene' | 'location'
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [focus, setFocus] = useState(0)
@@ -25,6 +26,7 @@ export default function CommandView({ sessionId, cameraEsn, aroundTs, moment }) 
       .then((res) => {
         if (!alive) return
         setLocation(res.location || '')
+        setGroupedBy(res.groupedBy || '')
         // Put the camera we came from first so it's the default focus.
         const list = res.cameras || []
         list.sort((a, b) => (a.esn === cameraEsn ? -1 : b.esn === cameraEsn ? 1 : 0))
@@ -75,6 +77,11 @@ export default function CommandView({ sessionId, cameraEsn, aroundTs, moment }) 
             <span>{cams.length} cameras · {location || 'this location'}</span>
             {moment && <span className="mono">{moment}</span>}
           </div>
+          {groupedBy === 'scene' ? (
+            <span className="cmd-group ai"><Sparkles size={11} /> Grouped by AI scene match</span>
+          ) : groupedBy === 'location' ? (
+            <span className="cmd-group loc"><MapPin size={11} /> Grouped by location (AI unavailable)</span>
+          ) : null}
         </div>
         <div className="cmd-grid">
           {cams.map((c, i) => (
@@ -152,6 +159,9 @@ const styles = `
   .cmd-head { padding: 4px 2px; }
   .cmd-title { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 800; }
   .cmd-sub { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; font-size: 12px; color: var(--text-2); }
+  .cmd-group { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; padding: 4px 9px; border-radius: 99px; font-size: 10.5px; font-weight: 700; letter-spacing: .2px; width: fit-content; }
+  .cmd-group.ai { color: #d9c9ff; background: rgba(168,92,255,.16); border: 1px solid rgba(168,92,255,.35); }
+  .cmd-group.loc { color: #ffd9a8; background: rgba(255,170,60,.14); border: 1px solid rgba(255,170,60,.3); }
   .cmd-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; padding-right: 2px; }
   .cmd-tile { text-align: left; border-radius: 10px; overflow: hidden; background: var(--surface); border: 1px solid var(--border); cursor: pointer; transition: border-color .15s, transform .15s; padding: 0; }
   .cmd-tile:hover { transform: translateY(-2px); border-color: var(--border-strong); }

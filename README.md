@@ -286,7 +286,7 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 |--------|----------|------|---------|
 | POST | `/api/cameras` | `{sessionId, authKey?}` | `{cameras:[{esn,name,location,status,imageId}], images:{esn:imageId}}` — lists account cameras; kicks off latest-preview downloads |
 | POST | `/api/previews` | `{sessionId, cameraEsn, aroundTs?, direction?, count?, authKey?}` | `{previews:[{imageId,ts,state}], oldestTs, newestTs}` — walks prev/next; `direction` = `around`/`older`/`newer` (older/newer step past the anchor) |
-| POST | `/api/location-cameras` | `{sessionId, cameraEsn, aroundTs?, authKey?}` | `{location, cameras:[{esn,name,location,status,imageId}]}` — cameras showing the same scene as the selected one (Gemini-vision grouping, EEN-location fallback) for the Command View wall |
+| POST | `/api/location-cameras` | `{sessionId, cameraEsn, aroundTs?, authKey?}` | `{location, cameras:[{esn,name,location,status,imageId}], groupedBy}` — cameras showing the same scene as the selected one for the Command View wall. `groupedBy` = `scene` (Gemini vision) or `location` (EEN-label fallback when Gemini is unavailable) |
 | GET | `/api/image/status` | `?imageId=` | `{id, state, ts, error?, caption?, captionState?}` — poll a preview download (and its Gemini caption) |
 | GET | `/api/images` | `?imageId=` | the downloaded preview JPEG (or `202` if not ready) |
 | POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?, engine?}` | **`202`** `{id, type, engine, state:"CREATED", roi}` — enqueued; poll for the result. `engine` = `dummy` (built-in) or `gemini` (Nano Banana) |

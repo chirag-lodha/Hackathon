@@ -200,8 +200,9 @@ type LocationCamerasRequest struct {
 // LocationCamerasResponse lists the co-located cameras (each with a preview
 // download in flight — poll /api/image/status like the camera grid).
 type LocationCamerasResponse struct {
-	Location string   `json:"location"`
-	Cameras  []Camera `json:"cameras"`
+	Location  string   `json:"location"`
+	Cameras   []Camera `json:"cameras"`
+	GroupedBy string   `json:"groupedBy"` // "scene" (Gemini vision) | "location" (EEN label fallback)
 }
 
 // ImageStatusResponse is the poll result for a preview/image download.

@@ -279,7 +279,7 @@ func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
 				out = append(out, types.Camera{ESN: esn, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: id})
 			}
 			if len(out) > 0 {
-				writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out})
+				writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out, GroupedBy: "scene"})
 				return
 			}
 		}
@@ -302,7 +302,7 @@ func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
 		out = append(out, types.Camera{ESN: cam.ESN, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: id})
 	}
 
-	writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out})
+	writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out, GroupedBy: "location"})
 }
 
 // sceneCacheTTL is how long a computed scene grouping is reused before recomputing.
