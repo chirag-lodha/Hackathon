@@ -174,9 +174,12 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 - **Async preview downloads** — cameras return immediately with a per-camera
   `imageId`; previews download on background goroutines and the UI polls status
 - **Gemini vision captions** — every downloaded preview is described by Gemini
-  ("what's in this frame") on a background worker; the caption shows on the camera
-  tile and under the workspace stage (uses the same `GEMINI_API_KEY`; degrades
-  gracefully to no caption if unset or rate-limited)
+  ("what's in this frame") on a **single rate-limited background worker** (so a
+  burst of 16 camera tiles never trips the free-tier RPM limit; transient
+  overload/quota errors are retried with backoff). The caption shows on the camera
+  tile and under the workspace stage. Uses `GEMINI_CAPTION_MODEL`
+  (default `gemini-2.5-flash-lite`); degrades gracefully to no caption if the key
+  is unset or the daily quota is exhausted
 - **Brivo voice assistant** — a Gemini-powered agent (hands-free voice or typed)
   that drives the whole UI: sessions, frame select, ROI, Super-Res, Holistic, 3D
 - Landing, Login, New Session, Camera grid, Workspace, and History pages
@@ -373,7 +376,8 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
 | `DATABASE_URL` | `postgres://lumina:lumina@localhost:5433/lumina?sslmode=disable` | Postgres connection |
 | `LUMINA_AUTH_SECRET` | `lumina-dev-secret-change-me` | signs the login cookie (set in prod) |
 | `GEMINI_API_KEY` | _(empty)_ | Brivo AI assistant — free key from Google AI Studio |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model — use `gemini-2.5-flash-lite` (biggest free quota) |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini chat model — use `gemini-2.5-flash-lite` (biggest free quota) |
+| `GEMINI_CAPTION_MODEL` | `gemini-2.5-flash-lite` | Gemini **vision** model for preview captions (high-volume; kept on a high-quota model) |
 
 ---
 

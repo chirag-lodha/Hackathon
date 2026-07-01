@@ -24,14 +24,26 @@ type Server struct {
 	engine *model.Engine
 	repo   *store.Repo
 	agent  *agent.Agent
-	hires  *hires.Processor
-	brivo  *brivo.Client
-	dlSem  chan struct{} // bounds concurrent preview downloads
-	capSem chan struct{} // bounds concurrent Gemini caption calls (rate-limit friendly)
+	hires    *hires.Processor
+	brivo    *brivo.Client
+	dlSem    chan struct{}   // bounds concurrent preview downloads
+	capQueue chan captionJob // serialized, rate-limited Gemini caption jobs
+}
+
+// captionJob is one preview frame awaiting a Gemini vision description.
+type captionJob struct {
+	imageID string
+	jpeg    []byte
+	attempt int
 }
 
 func New(cfg *config.Config, st *store.Store, cam *camera.Client, eng *model.Engine, repo *store.Repo, ag *agent.Agent, hp *hires.Processor, bv *brivo.Client) *Server {
-	return &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag, hires: hp, brivo: bv, dlSem: make(chan struct{}, 12), capSem: make(chan struct{}, 4)}
+	s := &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag, hires: hp, brivo: bv,
+		dlSem: make(chan struct{}, 12), capQueue: make(chan captionJob, 512)}
+	// Single worker drains caption jobs at a steady rate so a burst of previews
+	// (e.g. 16 camera tiles at once) never blows the Gemini free-tier RPM limit.
+	go s.captionWorker()
+	return s
 }
 
 // Handler builds the full http.Handler (routes + middleware).

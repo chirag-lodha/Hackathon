@@ -43,9 +43,9 @@ func main() {
 
 	cam := camera.New(cfg, st)
 	eng := model.NewEngine(cfg, st)
-	ag := agent.New(cfg.GeminiAPIKey, cfg.GeminiModel)
+	ag := agent.New(cfg.GeminiAPIKey, cfg.GeminiModel, cfg.GeminiCaptionModel)
 	if ag.Enabled() {
-		log.Printf("Brivo agent enabled (model: %s)", cfg.GeminiModel)
+		log.Printf("Brivo agent enabled (chat: %s, caption: %s)", cfg.GeminiModel, cfg.GeminiCaptionModel)
 	} else {
 		log.Printf("Brivo agent disabled (set GEMINI_API_KEY to enable)")
 	}

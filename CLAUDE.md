@@ -97,9 +97,13 @@ holistic runs it inline.
     and start `downloadPreviewAsync` (goroutine, bounded by `Server.dlSem`) which
     picks the archiver, fetches the latest preview, writes it to
     `sessions/{id}/images/{imageId}.jpeg`, and sets the row `SUCCESS`/`FAILURE`.
-    Once the JPEG is saved, `captionAsync` (bounded by `Server.capSem`) asks Gemini
-    vision (`agent.Describe`) to describe the frame and stores it on the row
-    (`ImageCaptioning` → `ImageCaptioned`); no-op if the agent is unconfigured.
+    Once the JPEG is saved, `captionAsync` enqueues it on `Server.capQueue`; a
+    single `captionWorker` goroutine drains it **rate-limited** (`captionInterval`,
+    ~15/min) so a burst of 16 tiles never trips the Gemini free-tier RPM limit,
+    calls `agent.Describe` (vision, model `GEMINI_CAPTION_MODEL`, default
+    `gemini-2.5-flash-lite`), retries transient overload/quota errors with backoff
+    (`isRetryable`/`retryDelay`), and stores the result (`ImageCaptioning` →
+    `ImageCaptioned`). No-op if the agent is unconfigured; graceful on failure.
   - UI polls `GET /api/image/status?imageId=` (returns `caption` + `captionState`
     too) then loads `GET /api/images?imageId=` (serves the JPEG, or `202` until ready).
     The frontend hook `useImageCaption` polls status until the caption resolves.

@@ -63,11 +63,14 @@ type Config struct {
 	CameraAPIBase string
 	CameraAuthKey string
 
-	// ---- Goku AI agent (Google Gemini) ----
+	// ---- Brivo AI agent (Google Gemini) ----
 	// GeminiAPIKey: free key from Google AI Studio (https://aistudio.google.com).
-	// GeminiModel: e.g. gemini-2.0-flash / gemini-2.5-flash / gemini-1.5-flash.
-	GeminiAPIKey string
-	GeminiModel  string
+	// GeminiModel: chat model, e.g. gemini-2.0-flash / gemini-2.5-flash-lite.
+	// GeminiCaptionModel: vision model for preview captions — defaults to
+	// gemini-2.5-flash-lite (biggest free quota), since captioning is high-volume.
+	GeminiAPIKey       string
+	GeminiModel        string
+	GeminiCaptionModel string
 
 	// AuthSecret signs the login cookie. Set LUMINA_AUTH_SECRET in production.
 	AuthSecret string
@@ -104,8 +107,9 @@ func Load() *Config {
 		DatabaseURL:   getenv("DATABASE_URL", "postgres://lumina:lumina@localhost:5433/lumina?sslmode=disable"),
 		CameraAPIBase: getenv("LUMINA_CAMERA_API", ""),
 		CameraAuthKey: getenv("LUMINA_CAMERA_AUTHKEY", ""),
-		GeminiAPIKey:  getenv("GEMINI_API_KEY", ""),
-		GeminiModel:   getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+		GeminiAPIKey:       getenv("GEMINI_API_KEY", ""),
+		GeminiModel:        getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+		GeminiCaptionModel: getenv("GEMINI_CAPTION_MODEL", "gemini-2.5-flash-lite"),
 		AuthSecret:    getenv("LUMINA_AUTH_SECRET", "lumina-dev-secret-change-me"),
 	}
 	return c

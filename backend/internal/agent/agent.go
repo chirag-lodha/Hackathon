@@ -53,13 +53,17 @@ type ChatResponse struct {
 }
 
 type Agent struct {
-	apiKey string
-	model  string
-	http   *http.Client
+	apiKey       string
+	model        string // chat model
+	captionModel string // vision model for preview captions
+	http         *http.Client
 }
 
-func New(apiKey, model string) *Agent {
-	return &Agent{apiKey: apiKey, model: model, http: &http.Client{Timeout: 30 * time.Second}}
+func New(apiKey, model, captionModel string) *Agent {
+	if captionModel == "" {
+		captionModel = model
+	}
+	return &Agent{apiKey: apiKey, model: model, captionModel: captionModel, http: &http.Client{Timeout: 30 * time.Second}}
 }
 
 // Enabled reports whether a Gemini key is configured.
@@ -222,7 +226,7 @@ func (a *Agent) Describe(ctx context.Context, img []byte, mimeType string) (stri
 	}
 	buf, _ := json.Marshal(body)
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", a.model, a.apiKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", a.captionModel, a.apiKey)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
 	if err != nil {
 		return "", err

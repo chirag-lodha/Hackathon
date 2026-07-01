@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -66,28 +67,104 @@ func (s *Server) downloadPreviewAsync(img store.Image, authKey string) {
 	}()
 }
 
-// captionAsync asks Gemini to describe a preview frame and stores the result on
-// the image row. No-op if the agent isn't configured. Bounded by capSem and
-// graceful on error (the UI just shows no caption).
+// captionInterval spaces out Gemini vision calls to stay under the free-tier
+// rate limit (~20 requests/min for flash models). ~4s => ~15/min.
+const captionInterval = 4 * time.Second
+
+// maxCaptionAttempts bounds how many times a rate-limited caption is retried.
+const maxCaptionAttempts = 3
+
+// captionAsync queues a preview frame for a Gemini vision description. No-op if
+// the agent isn't configured. Enqueue is non-blocking; if the queue is full the
+// job is dropped (the UI just shows no caption).
 func (s *Server) captionAsync(imageID string, jpeg []byte) {
 	if s.agent == nil || !s.agent.Enabled() || len(jpeg) == 0 {
 		return
 	}
-	go func() {
-		s.capSem <- struct{}{}
-		defer func() { <-s.capSem }()
+	_ = s.repo.ImageCaptioning(imageID)
+	select {
+	case s.capQueue <- captionJob{imageID: imageID, jpeg: jpeg}:
+	default:
+		log.Printf("caption queue full, dropping %s", imageID)
+		_ = s.repo.ImageCaptioned(imageID, "", false)
+	}
+}
 
-		_ = s.repo.ImageCaptioning(imageID)
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		text, err := s.agent.Describe(ctx, jpeg, "image/jpeg")
-		if err != nil || text == "" {
-			_ = s.repo.ImageCaptioned(imageID, "", false)
-			return
+// captionWorker drains the caption queue one job at a time, rate-limited, so a
+// burst of previews never trips the Gemini free-tier RPM limit.
+func (s *Server) captionWorker() {
+	var last time.Time
+	for job := range s.capQueue {
+		if wait := captionInterval - time.Since(last); wait > 0 {
+			time.Sleep(wait)
 		}
-		_ = s.repo.ImageCaptioned(imageID, text, true)
-	}()
+		last = time.Now()
+		s.runCaption(job)
+	}
+}
+
+func (s *Server) runCaption(job captionJob) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	text, err := s.agent.Describe(ctx, job.jpeg, "image/jpeg")
+	if err == nil && text != "" {
+		_ = s.repo.ImageCaptioned(job.imageID, text, true)
+		return
+	}
+
+	// Retry transient errors (quota/rate-limit AND model-overload "high demand")
+	// by re-queueing after a bounded delay, so captions that lost the race still land.
+	if err != nil && isRetryable(err) && job.attempt+1 < maxCaptionAttempts {
+		delay := retryDelay(err)
+		job.attempt++
+		log.Printf("caption %s transient error, retry %d in %s: %v", job.imageID, job.attempt, delay, err)
+		go func() {
+			time.Sleep(delay)
+			select {
+			case s.capQueue <- job:
+			default:
+				_ = s.repo.ImageCaptioned(job.imageID, "", false)
+			}
+		}()
+		return
+	}
+
+	if err != nil {
+		log.Printf("caption %s failed: %v", job.imageID, err)
+	}
+	_ = s.repo.ImageCaptioned(job.imageID, "", false)
+}
+
+// isRetryable reports whether a Gemini error is transient — a quota/rate-limit
+// hit or a temporary model-overload ("high demand") / 5xx — and worth retrying.
+func isRetryable(err error) bool {
+	m := strings.ToLower(err.Error())
+	for _, s := range []string{"quota", "rate limit", "429", "exceeded", "high demand", "try again later", "overloaded", "unavailable", "503", "500", "internal error"} {
+		if strings.Contains(m, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// retryDelay picks how long to wait before retrying: the API-suggested "retry in
+// Xs" for rate limits (clamped), else a short backoff for transient overloads.
+func retryDelay(err error) time.Duration {
+	m := err.Error()
+	if i := strings.Index(m, "retry in "); i >= 0 {
+		rest := m[i+len("retry in "):]
+		if end := strings.IndexAny(rest, "s "); end > 0 {
+			if secs, perr := strconv.ParseFloat(rest[:end], 64); perr == nil && secs > 0 {
+				d := time.Duration(secs*float64(time.Second)) + time.Second
+				if d > 90*time.Second {
+					d = 90 * time.Second
+				}
+				return d
+			}
+		}
+	}
+	return 8 * time.Second // transient overload backoff
 }
 
 // POST /api/cameras {sessionId, authKey} — list the account's cameras and kick
