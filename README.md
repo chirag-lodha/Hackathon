@@ -33,8 +33,9 @@ recorded as a *Trial* in Postgres and browsable in a history gallery.
 
 Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imagery.
 
-1. **Start a session** — give it a name and a camera ESN (plus an optional moment
-   in time and auth key).
+1. **Log in** (username/password — signup-or-login), then **start a session** —
+   give it a name, a camera ESN, and the camera auth key (stored against your
+   user for 24h), plus an optional moment in time.
 2. **Browse frames** — the backend returns a ±5s window of preview frames around
    that moment; scroll the filmstrip left/right to fetch more in 5-second sets.
 3. **Enhance** — pick a frame, optionally draw a region of interest, then run:
@@ -110,10 +111,14 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 
 ## Using the app
 
-1. **Landing** — choose **New capture** or **History**.
-2. **New session** — *Session name* and *Camera ESN* are required; *Date & time*
-   (defaults to now) and *Auth key* are optional. Submit to fetch frames.
-3. **Workspace**
+1. **Log in / sign up** — enter a username + password and hit **Continue**. A new
+   username creates an account; an existing one logs you in. You stay signed in via
+   a cookie; log out from the Landing top-right.
+2. **Landing** — choose **New capture** or **History**.
+3. **New session** — *Session name*, *Camera ESN* and *Auth key* are required
+   (*Date & time* defaults to now). The session (name + auth key) is stored against
+   your user for 24h, then frames are fetched.
+4. **Workspace**
    - The **filmstrip** at the bottom holds the ±5s window; scroll to either edge to
      load the next 5-second set in that direction.
    - Click a frame to load it into the stage. **Drag on the image** to draw an ROI
@@ -122,7 +127,7 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
      panel. **Changing the ROI re-runs the current operation automatically.**
    - Super-res shows a **before/after compare slider**; holistic shows the fused
      image plus thumbnails of the contributing cameras.
-4. **History** — a gallery of all successful conversions (newest first), with filter
+5. **History** — a gallery of all successful conversions (newest first), with filter
    tabs (All / Super-Res / Holistic). Click any card to open the **full-screen
    viewer**; navigate with the on-screen arrows or **←/→**, close with **Esc**.
 
@@ -130,7 +135,11 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 
 ## Features (ready)
 
-- Landing, New Session (with validation), Workspace, and History pages
+- **Accounts** — username/password login (one button = signup-or-login), cookie
+  session, and **user-owned sessions** (name + camera auth key, valid 24h)
+- **Brivo voice assistant** — a Gemini-powered agent (hands-free voice or typed)
+  that drives the whole UI: sessions, frame select, ROI, Super-Res, Holistic, 3D
+- Landing, Login, New Session (with validation), Workspace, and History pages
 - ±5s frame window with **infinite filmstrip paging** (both directions, de-duped)
 - **ROI drawing** on the source frame (normalized, resolution-independent)
 - **Super-Res** and **Holistic View** operations, with auto re-run on ROI change
@@ -153,8 +162,9 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 - **Real holistic logic** — resolve the actual co-located cameras and fuse them
 - **Async processing** — return `CREATED` immediately and have the UI poll `state`
   (the schema already supports it; today the op is synchronous)
-- **Auth / users** — no login yet; `trials` has no `user_id` (reserved for later).
-  The delete endpoints are *hidden*, **not secured**
+- **Trials not yet user-scoped** — login + user-owned sessions exist, but `trials`
+  (history) aren't linked to `user_id` yet, so history is global. The `delete`
+  endpoints are *hidden*, **not secured**.
 - **Tests & CI**, structured error/toast handling, holistic thumbnail cleanup on
   delete
 
@@ -215,9 +225,9 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 
 ---
 
-## Goku — the AI voice assistant (Gemini)
+## Brivo — the AI voice assistant (Gemini)
 
-Goku is an app-wide voice agent (Google Gemini) that understands free speech and
+Brivo is an app-wide voice agent (Google Gemini) that understands free speech and
 drives the UI: create a session, select a frame, draw an ROI, run Super-Res /
 Holistic / Super-Saiyan 3D, open history. Tap the mic once for a hands-free
 conversation, or type in the panel.
@@ -233,10 +243,10 @@ cp backend/.env.example backend/.env
 #    (free tier: GEMINI_MODEL=gemini-2.5-flash-lite has the biggest free quota;
 #     if you ever see "quota exceeded", switch to gemini-flash-latest)
 # 4. start the backend — it auto-loads backend/.env
-cd backend && LUMINA_ADDR=:8090 go run .   # logs "Goku agent enabled"
+cd backend && LUMINA_ADDR=:8090 go run .   # logs "Brivo agent enabled"
 ```
 
-Without a key, Goku still loads but says "my AI brain isn't configured yet" — the
+Without a key, Brivo still loads but says "my AI brain isn't configured yet" — the
 rest of the app works normally. For Docker, add the key to the `app` service via
 `env_file: backend/.env` or an `environment:` entry.
 
@@ -283,7 +293,7 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
 | `LUMINA_CAMERA_AUTHKEY` | _(empty)_ | default camera auth key (later) |
 | `DATABASE_URL` | `postgres://lumina:lumina@localhost:5433/lumina?sslmode=disable` | Postgres connection |
 | `LUMINA_AUTH_SECRET` | `lumina-dev-secret-change-me` | signs the login cookie (set in prod) |
-| `GEMINI_API_KEY` | _(empty)_ | Goku AI assistant — free key from Google AI Studio |
+| `GEMINI_API_KEY` | _(empty)_ | Brivo AI assistant — free key from Google AI Studio |
 | `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model — use `gemini-2.5-flash-lite` (biggest free quota) |
 
 ---
@@ -355,13 +365,13 @@ docker compose up -d postgres          # Postgres on host :5433
 ```bash
 cd backend
 go mod download                        # first time
-cp .env.example .env                   # then add your own GEMINI_API_KEY (see "Goku" below)
+cp .env.example .env                   # then add your own GEMINI_API_KEY (see "Brivo" below)
 LUMINA_ADDR=:8090 go run .             # API on :8090; runs migrations on startup
 ```
 
-> 🔑 To enable the Goku AI assistant, put **your own** free Gemini key in
-> `backend/.env`. See [Goku — the AI voice assistant](#goku--the-ai-voice-assistant-gemini).
-> The app runs fine without it (Goku just says it's not configured).
+> 🔑 To enable the Brivo AI assistant, put **your own** free Gemini key in
+> `backend/.env`. See [Brivo — the AI voice assistant](#brivo--the-ai-voice-assistant-gemini).
+> The app runs fine without it (Brivo just says it's not configured).
 
 **3. Frontend** (Node 18+)
 

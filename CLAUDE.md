@@ -7,7 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Brivo Lumina** — camera super-resolution app. React (Vite) frontend + Go backend
 + Postgres. Pull a ±5s window of camera frames, draw an optional ROI, and enhance
 to high-res ("Super-Res") or fuse co-located cameras ("Holistic View"). Each action
-is a *Trial* persisted in Postgres. See `README.md` for the full feature/usage write-up.
+is a *Trial* persisted in Postgres. Has **username/password auth** (user-owned
+sessions) and **"Brivo"**, an app-wide **Gemini-powered voice agent** that drives
+the UI. See `README.md` for the full feature/usage write-up.
 
 ## Commands
 
@@ -67,6 +69,16 @@ Request flow for an enhancement (read these together to understand it):
   - `imaging.GenerateFrame` uses **fractional** positions so the same seed renders an
     identical composition at any resolution (low-res capture vs high-res output align).
   - `imaging` is pure stdlib (no native deps) — keep it that way so it builds offline.
+- **Auth** (`internal/server/auth.go`): `POST /api/auth` is signup-or-login (bcrypt),
+  sets a signed HTTP-only cookie `lumina_auth` (`<uid>.<hmac(uid, LUMINA_AUTH_SECRET)>`).
+  `GET /api/me` restores the user; `POST /api/sessions` stores a user-owned session
+  (name + camera auth key, 24h). Cookies are same-origin (work through the Vite proxy).
+- **Brivo voice agent** (`internal/agent`): `POST /api/chat` sends the conversation +
+  app context to Gemini and returns `{reply, actions[]}`. Needs `GEMINI_API_KEY` in
+  `backend/.env` (gitignored; loaded by `config.loadDotEnv`); use
+  `GEMINI_MODEL=gemini-2.5-flash-lite` (biggest free quota). The frontend agent lives
+  in `components/VoiceAssistant.jsx` (browser STT/TTS); in-workspace actions flow
+  through a **command queue** in `SessionContext` that `Workspace` consumes in order.
 
 ## Database conventions (important)
 
@@ -74,8 +86,10 @@ Request flow for an enhancement (read these together to understand it):
   explicit SQL in `backend/internal/db/migrations/*.sql`, embedded via `go:embed` and
   applied on startup by `db.Migrate`. To change the schema, add a new numbered
   `*.up.sql`/`*.down.sql` pair; do not edit applied migrations.
-- One table: **`trials`** (one row per enhancement). Uses `gorm.Model` for
-  `id/created_at/updated_at/deleted_at` — do not redeclare those columns.
+- Tables: **`trials`** (one row per enhancement), **`users`** (bcrypt), **`sessions`**
+  (user_id, name, auth_key, expires_at = +24h). All use `gorm.Model` for
+  `id/created_at/updated_at/deleted_at` — do not redeclare those columns. Migrations:
+  `000001_init` (trials), `000002_auth` (users, sessions).
 - **State lifecycle** is updated in the handler: `CREATED` → `PROCESSING` →
   `SUCCESS`/`FAILURE`. The op is currently **synchronous** (instant with the dummy
   model); the schema already supports an async return-then-poll flow.
