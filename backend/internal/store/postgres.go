@@ -1,6 +1,7 @@
-// Package db owns the Postgres connection (GORM for queries) and schema
-// migrations (golang-migrate with explicit SQL files — NOT gorm AutoMigrate).
-package db
+// Postgres connection (GORM for queries) and schema migrations (golang-migrate
+// with explicit SQL files — NOT gorm AutoMigrate). Part of the store package,
+// which owns all persistence: on-disk images (store.go) and Postgres (here).
+package store
 
 import (
 	"embed"

@@ -33,6 +33,11 @@ There is **no test suite yet** (no `go test` targets, no frontend tests). Verify
 changes by building (`go build ./...`, `npm run build`) and exercising the API with
 `curl` or the UI.
 
+**Secrets / `.env`:** `config.Load` auto-loads `backend/.env` then `../.env`
+(repo root) at startup, and never overrides a value already in the environment.
+Put `GEMINI_API_KEY` (and any other secrets) in `backend/.env` — it is gitignored;
+copy `backend/.env.example` to start. Do not hardcode keys.
+
 ## Port gotcha (this machine)
 
 `5432` and `8080` are occupied by **other** projects here. This repo therefore uses
@@ -44,8 +49,10 @@ whatever port the dev backend uses.
 ## Architecture (big picture)
 
 Request flow for an enhancement (read these together to understand it):
-`server/handlers.go` → `db` (create Trial, set state) → `model` (run pipeline) →
-`store`/`imaging` (write PNG) → Trial updated → JSON response with a `/files/...` URL.
+`server/handlers.go` → `store` (create Trial via `Repo`, set state) → `model`
+(run pipeline) → `store`/`imaging` (write PNG) → Trial updated → JSON response
+with a `/files/...` URL. The `store` package is the whole persistence layer:
+Postgres (Repo/models/migrations) **and** the on-disk image store.
 
 - **Frontend ↔ backend contract** lives in two places that MUST agree:
   `frontend/src/api/client.js` (+ `mock.js`) and `backend/internal/types/types.go`.
@@ -80,11 +87,35 @@ Request flow for an enhancement (read these together to understand it):
   in `components/VoiceAssistant.jsx` (browser STT/TTS); in-workspace actions flow
   through a **command queue** in `SessionContext` that `Workspace` consumes in order.
 
+## Goku — the AI agent (`internal/agent` + `/api/chat`)
+
+Goku is a conversational agent (Google Gemini) that **drives the UI**, not the
+backend. `internal/agent` sends the message history + a `Context` snapshot of the
+current app state to Gemini with `responseMimeType: application/json`, and parses
+back `{reply, actions[]}`. The backend returns that verbatim over `POST /api/chat`;
+the **frontend executes the actions** (`create_session`, `select_frame`, `set_roi`,
+`super_res`, `holistic`, `super_saiyan`, `open_history`, ...).
+
+- The list of valid action types + their params lives in the `systemPrompt` in
+  `internal/agent/agent.go`. Adding a UI capability means updating BOTH that prompt
+  AND the action dispatcher in `frontend/src/components/VoiceAssistant.jsx` — they
+  must agree on action names and param shapes.
+- No key → `Agent.Enabled()` is false and Goku returns a friendly "not configured"
+  reply; the rest of the app works normally. `GEMINI_MODEL` defaults to
+  `gemini-2.0-flash` (use `gemini-2.5-flash` for the free tier).
+- **Super-Saiyan** is the `super_saiyan` action: renders a holistic result as an
+  orbitable 3D scene (`frontend/src/components/Holistic3D.jsx`); requires a prior
+  holistic run.
+
 ## Database conventions (important)
 
+- **Postgres access lives in the `store` package** (alongside the on-disk image
+  layout): connection + migrations in `store/postgres.go`, the `Trial` model in
+  `store/models.go`, the `Repo` in `store/repo.go`. `store` is the single
+  persistence layer for both files and the database.
 - **GORM for queries, golang-migrate for schema — NEVER `AutoMigrate`.** Schema is
-  explicit SQL in `backend/internal/db/migrations/*.sql`, embedded via `go:embed` and
-  applied on startup by `db.Migrate`. To change the schema, add a new numbered
+  explicit SQL in `backend/internal/store/migrations/*.sql`, embedded via `go:embed`
+  and applied on startup by `store.Migrate`. To change the schema, add a new numbered
   `*.up.sql`/`*.down.sql` pair; do not edit applied migrations.
 - Tables: **`trials`** (one row per enhancement), **`users`** (bcrypt), **`sessions`**
   (user_id, name, auth_key, expires_at = +24h). All use `gorm.Model` for
@@ -95,7 +126,7 @@ Request flow for an enhancement (read these together to understand it):
   model); the schema already supports an async return-then-poll flow.
 - **ROI is stored as two-point coords `[{x,y},{x,y}]`** (normalized) in the `coords`
   jsonb column, but the API wire format is `{x,y,w,h}`. Conversion happens in
-  `internal/db/repo.go` (`CoordsFromROI` / `ROIFromCoords`) — don't leak one format
+  `internal/store/repo.go` (`CoordsFromROI` / `ROIFromCoords`) — don't leak one format
   into the other.
 
 ## Conventions

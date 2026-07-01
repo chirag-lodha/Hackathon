@@ -16,7 +16,7 @@ import (
 	"lumina/internal/agent"
 	"lumina/internal/camera"
 	"lumina/internal/config"
-	"lumina/internal/db"
+	"lumina/internal/hires"
 	"lumina/internal/model"
 	"lumina/internal/server"
 	"lumina/internal/store"
@@ -31,14 +31,14 @@ func main() {
 	}
 
 	// Run schema migrations (golang-migrate) then connect GORM.
-	if err := db.Migrate(cfg.DatabaseURL); err != nil {
+	if err := store.Migrate(cfg.DatabaseURL); err != nil {
 		log.Fatalf("migrations: %v (is Postgres up? `docker compose up -d`)", err)
 	}
-	gdb, err := db.Open(cfg.DatabaseURL)
+	gdb, err := store.Open(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("db connect: %v", err)
 	}
-	repo := db.NewRepo(gdb)
+	repo := store.NewRepo(gdb)
 
 	cam := camera.New(cfg, st)
 	eng := model.NewEngine(cfg, st)
@@ -48,7 +48,13 @@ func main() {
 	} else {
 		log.Printf("Brivo agent disabled (set GEMINI_API_KEY to enable)")
 	}
-	srv := server.New(cfg, st, cam, eng, repo, ag)
+
+	// HiRes background processor: start its dispatcher goroutine, then hand it
+	// to the server so handlers can Submit trials for async processing.
+	hp := hires.New(eng, repo)
+	hp.Init()
+
+	srv := server.New(cfg, st, cam, eng, repo, ag, hp)
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,

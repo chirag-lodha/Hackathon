@@ -1,4 +1,4 @@
-package db
+package store
 
 import (
 	"encoding/json"
@@ -36,6 +36,15 @@ func (r *Repo) Complete(t *Trial) error {
 func (r *Repo) Fail(id uint, msg string) error {
 	return r.db.Model(&Trial{}).Where("id = ?", id).
 		Updates(map[string]any{"state": StateFailure, "error": msg}).Error
+}
+
+// GetTrial loads a single trial by ID.
+func (r *Repo) GetTrial(id uint) (*Trial, error) {
+	var t Trial
+	if err := r.db.First(&t, id).Error; err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 // ListSuccess returns successful trials, newest first (for the history gallery).

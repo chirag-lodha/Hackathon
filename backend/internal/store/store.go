@@ -1,5 +1,6 @@
-// Package store owns the on-disk image layout. (Conversion history now lives
-// in Postgres — see internal/db.)
+// Package store is the persistence layer. This file owns the on-disk image
+// layout; Postgres access (connection, migrations, models, and the trials
+// Repo) lives alongside it in postgres.go / models.go / repo.go.
 //
 // Layout (under DataDir):
 //

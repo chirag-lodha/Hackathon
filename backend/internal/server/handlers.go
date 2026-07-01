@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"lumina/internal/agent"
-	"lumina/internal/db"
+	"lumina/internal/hires"
+	"lumina/internal/store"
 	"lumina/internal/types"
 )
 
@@ -67,8 +68,9 @@ func (s *Server) handleFrames(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/super-resolve — enhance one frame (optionally an ROI) to high-res.
 //
-// Lifecycle: create the trial as CREATED, flip to PROCESSING, run the model,
-// then mark SUCCESS (with the output) or FAILURE (with the error).
+// Async: create the trial as CREATED, hand it to the HiRes processor, and
+// return 202 immediately. The processor drives the trial through PROCESSING ->
+// SUCCESS/FAILURE in the background; the client polls GET /api/trials/{id}.
 func (s *Server) handleSuperResolve(w http.ResponseWriter, r *http.Request) {
 	var req types.SuperResolveRequest
 	if err := decode(r, &req); err != nil {
@@ -85,35 +87,43 @@ func (s *Server) handleSuperResolve(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not create trial: "+err.Error())
 		return
 	}
-	_ = s.repo.SetState(trial.ID, db.StateProcessing)
 
-	res, err := s.engine.SuperResolve(req.ImagePath, req.ROI)
+	// Enqueue for background processing (the processor reads imagePath + ROI
+	// back from the stored trial by ID).
+	s.hires.Submit(&hires.HiRes{TrialID: trial.ID})
+
+	writeJSON(w, http.StatusAccepted, types.SuperResolveResponse{
+		ID:    fmt.Sprint(trial.ID),
+		Type:  "super_res",
+		State: trial.State, // CREATED — poll GET /api/trials/{id} for the result
+		ROI:   req.ROI,
+	})
+}
+
+// GET /api/trials/{id} — poll an async trial's current state and (once ready)
+// its result. Used by the client after POST /api/super-resolve returns 202.
+func (s *Server) handleTrialStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
 	if err != nil {
-		_ = s.repo.Fail(trial.ID, err.Error())
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeErr(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-
-	trial.ResultPath = res.OutputPath
-	trial.ResultURL = res.OutputURL
-	trial.SourceURL = res.SourceURL
-	trial.Scale = res.Scale
-	trial.DurationMS = res.MS
-	if err := s.repo.Complete(trial); err != nil {
-		log.Printf("complete trial %d: %v", trial.ID, err)
+	t, err := s.repo.GetTrial(uint(id))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "trial not found")
+		return
 	}
-
-	writeJSON(w, http.StatusOK, types.SuperResolveResponse{
-		ID:        fmt.Sprint(trial.ID),
-		Type:      "super_res",
-		State:     trial.State,
-		ImageURL:  res.OutputURL,
-		SourceURL: res.SourceURL,
-		Width:     res.Width,
-		Height:    res.Height,
-		Scale:     res.Scale,
-		ROI:       req.ROI,
-		MS:        res.MS,
+	writeJSON(w, http.StatusOK, types.TrialStatusResponse{
+		ID:        fmt.Sprint(t.ID),
+		Type:      t.Type,
+		State:     t.State,
+		ImageURL:  t.ResultURL,
+		SourceURL: t.SourceURL,
+		Scale:     t.Scale,
+		Sources:   store.UnmarshalSources(t.Sources),
+		ROI:       store.ROIFromCoords(t.Coords),
+		MS:        t.DurationMS,
+		Error:     t.Error,
 	})
 }
 
@@ -134,7 +144,7 @@ func (s *Server) handleAlternate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "could not create trial: "+err.Error())
 		return
 	}
-	_ = s.repo.SetState(trial.ID, db.StateProcessing)
+	_ = s.repo.SetState(trial.ID, store.StateProcessing)
 
 	res, err := s.engine.Holistic(req.ImagePath, req.CameraESN, req.ROI)
 	if err != nil {
@@ -145,7 +155,7 @@ func (s *Server) handleAlternate(w http.ResponseWriter, r *http.Request) {
 
 	trial.ResultPath = res.OutputPath
 	trial.ResultURL = res.OutputURL
-	trial.Sources = db.MarshalSources(res.Sources)
+	trial.Sources = store.MarshalSources(res.Sources)
 	trial.DurationMS = res.MS
 	if err := s.repo.Complete(trial); err != nil {
 		log.Printf("complete trial %d: %v", trial.ID, err)
@@ -236,14 +246,14 @@ func (s *Server) removeFile(rel string) {
 }
 
 // newTrial builds a CREATED trial from a request (ROI stored as coords).
-func (s *Server) newTrial(typ, esn, session, framePath, frameTS, frameLabel string, roi *types.ROI) *db.Trial {
-	t := &db.Trial{
+func (s *Server) newTrial(typ, esn, session, framePath, frameTS, frameLabel string, roi *types.ROI) *store.Trial {
+	t := &store.Trial{
 		ESN:         esn,
 		SessionName: session,
 		FilePath:    framePath,
 		FrameLabel:  frameLabel,
-		Coords:      db.CoordsFromROI(roi),
-		State:       db.StateCreated,
+		Coords:      store.CoordsFromROI(roi),
+		State:       store.StateCreated,
 		Type:        typ,
 	}
 	if frameTS != "" {
@@ -255,7 +265,7 @@ func (s *Server) newTrial(typ, esn, session, framePath, frameTS, frameLabel stri
 }
 
 // trialToRecord maps a stored trial to the history DTO the frontend reads.
-func trialToRecord(t db.Trial) types.HistoryRecord {
+func trialToRecord(t store.Trial) types.HistoryRecord {
 	return types.HistoryRecord{
 		ID:          fmt.Sprint(t.ID),
 		Type:        t.Type,
@@ -265,12 +275,12 @@ func trialToRecord(t db.Trial) types.HistoryRecord {
 		CameraESN:   t.ESN,
 		FramePath:   t.FilePath,
 		FrameLabel:  t.FrameLabel,
-		ROI:         db.ROIFromCoords(t.Coords),
+		ROI:         store.ROIFromCoords(t.Coords),
 		Thumb:       t.ResultURL,
 		ImageURL:    t.ResultURL,
 		SourceURL:   t.SourceURL,
 		Scale:       t.Scale,
-		Sources:     db.UnmarshalSources(t.Sources),
+		Sources:     store.UnmarshalSources(t.Sources),
 		MS:          t.DurationMS,
 	}
 }

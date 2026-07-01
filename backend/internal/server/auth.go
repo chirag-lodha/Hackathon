@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"lumina/internal/db"
+	"lumina/internal/store"
 	"lumina/internal/types"
 )
 
@@ -84,7 +84,7 @@ func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var user *db.User
+	var user *store.User
 	isNew := false
 	if existing == nil {
 		// signup
@@ -156,7 +156,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess := &db.Session{
+	sess := &store.Session{
 		UserID:    uid,
 		Name:      req.Name,
 		AuthKey:   strings.TrimSpace(req.AuthKey),

@@ -71,6 +71,22 @@ type SuperResolveResponse struct {
 	MS        int64  `json:"ms"`
 }
 
+// TrialStatusResponse is returned by GET /api/trials/{id} while polling an
+// async job. The result fields are populated once State == SUCCESS; Error is
+// set on FAILURE.
+type TrialStatusResponse struct {
+	ID        string           `json:"id"`
+	Type      string           `json:"type"`  // "super_res" | "holistic"
+	State     string           `json:"state"` // CREATED | PROCESSING | SUCCESS | FAILURE
+	ImageURL  string           `json:"imageUrl,omitempty"`
+	SourceURL string           `json:"sourceUrl,omitempty"`
+	Scale     int              `json:"scale,omitempty"`
+	Sources   []HolisticSource `json:"sources,omitempty"`
+	ROI       *ROI             `json:"roi"`
+	MS        int64            `json:"ms"`
+	Error     string           `json:"error,omitempty"`
+}
+
 // ---------- /api/alternate (holistic) ----------
 
 type AlternateRequest struct {

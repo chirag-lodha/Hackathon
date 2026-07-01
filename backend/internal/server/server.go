@@ -11,7 +11,7 @@ import (
 	"lumina/internal/agent"
 	"lumina/internal/camera"
 	"lumina/internal/config"
-	"lumina/internal/db"
+	"lumina/internal/hires"
 	"lumina/internal/model"
 	"lumina/internal/store"
 )
@@ -21,12 +21,13 @@ type Server struct {
 	store  *store.Store
 	camera *camera.Client
 	engine *model.Engine
-	repo   *db.Repo
+	repo   *store.Repo
 	agent  *agent.Agent
+	hires  *hires.Processor
 }
 
-func New(cfg *config.Config, st *store.Store, cam *camera.Client, eng *model.Engine, repo *db.Repo, ag *agent.Agent) *Server {
-	return &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag}
+func New(cfg *config.Config, st *store.Store, cam *camera.Client, eng *model.Engine, repo *store.Repo, ag *agent.Agent, hp *hires.Processor) *Server {
+	return &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag, hires: hp}
 }
 
 // Handler builds the full http.Handler (routes + middleware).
@@ -36,6 +37,7 @@ func (s *Server) Handler() http.Handler {
 	// API (method-aware routing, Go 1.22+).
 	mux.HandleFunc("POST /api/frames", s.handleFrames)
 	mux.HandleFunc("POST /api/super-resolve", s.handleSuperResolve)
+	mux.HandleFunc("GET /api/trials/{id}", s.handleTrialStatus)
 	mux.HandleFunc("POST /api/alternate", s.handleAlternate)
 	mux.HandleFunc("POST /api/history", s.handleHistory)
 	mux.HandleFunc("DELETE /api/trials/{id}", s.handleDeleteTrial)
