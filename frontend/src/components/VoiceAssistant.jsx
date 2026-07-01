@@ -148,6 +148,7 @@ export default function VoiceAssistant() {
       case 'set_roi':
       case 'clear_roi':
       case 'super_res':
+      case 'gemini_enhance':
       case 'holistic':
       case 'super_saiyan':
         if (loc.pathname !== '/workspace') nav('/workspace')

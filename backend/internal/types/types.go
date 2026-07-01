@@ -55,12 +55,14 @@ type SuperResolveRequest struct {
 	SessionName    string `json:"sessionName"`
 	FrameTimestamp string `json:"frameTimestamp"`
 	FrameLabel     string `json:"frameLabel"`
-	ROI            *ROI   `json:"roi"` // nil => whole frame
+	ROI            *ROI   `json:"roi"`    // nil => whole frame
+	Engine         string `json:"engine"` // "" | "dummy" | "gemini" (Nano Banana)
 }
 
 type SuperResolveResponse struct {
 	ID        string `json:"id"`
-	Type      string `json:"type"` // "super_res"
+	Type      string `json:"type"`             // "super_res"
+	Engine    string `json:"engine,omitempty"` // which engine is producing it
 	State     string `json:"state"`
 	ImageURL  string `json:"imageUrl"`
 	SourceURL string `json:"sourceUrl"`
@@ -76,8 +78,9 @@ type SuperResolveResponse struct {
 // set on FAILURE.
 type TrialStatusResponse struct {
 	ID        string           `json:"id"`
-	Type      string           `json:"type"`  // "super_res" | "holistic"
-	State     string           `json:"state"` // CREATED | PROCESSING | SUCCESS | FAILURE
+	Type      string           `json:"type"`             // "super_res" | "holistic"
+	Engine    string           `json:"engine,omitempty"` // "" | "dummy" | "gemini"
+	State     string           `json:"state"`            // CREATED | PROCESSING | SUCCESS | FAILURE
 	ImageURL  string           `json:"imageUrl,omitempty"`
 	SourceURL string           `json:"sourceUrl,omitempty"`
 	Scale     int              `json:"scale,omitempty"`

@@ -123,6 +123,13 @@ holistic runs it inline.
     (`seedFromPath`, which requires a `.png` suffix); **real `.jpg` previews from
     `brivo` fall back to load → crop → sharpen-upscale**. Swap a real model in
     `model.NewEngine`.
+  - **Gemini super-res engine (`gemini`) — real.** `Engine.GeminiEnhance` (crop to
+    ROI → PNG → `agent.GenerateImage`, the Gemini 2.5 Flash Image "Nano Banana"
+    model) is wired via `Engine.SetImageGenerator(ag)` in `main.go`. `HiRes` picks
+    it when `trial.Engine == "gemini"`, else the dummy upscaler. Selected per
+    request (`SuperResolveRequest.Engine`); the handler only honors `gemini` when
+    `engine.GeminiAvailable()`. **Image generation is NOT free-tier** (`limit: 0`)
+    — without a billed key the trial fails cleanly with the quota error.
   - `imaging.GenerateFrame` uses **fractional** positions so the same seed renders an
     identical composition at any resolution (low-res capture vs high-res output align).
   - `imaging` is pure stdlib (no native deps) — keep it that way so it builds offline.
@@ -133,7 +140,10 @@ holistic runs it inline.
 - **Brivo voice agent** (`internal/agent`): `POST /api/chat` sends the conversation +
   app context to Gemini and returns `{reply, actions[]}`. The same package also has
   `Agent.Describe(ctx, jpeg, mime)` — a **Gemini vision** call (inline image part,
-  plain-text reply) used to caption every downloaded preview. Needs `GEMINI_API_KEY` in
+  plain-text reply) used to caption every downloaded preview — and
+  `Agent.GenerateImage(ctx, img, mime, prompt)` — a **Gemini image-generation**
+  call (`GEMINI_IMAGE_MODEL`, `responseModalities:["IMAGE"]`) for the Gemini
+  super-res engine. Needs `GEMINI_API_KEY` in
   `backend/.env` (gitignored; loaded by `config.loadDotEnv`); use
   `GEMINI_MODEL=gemini-2.5-flash-lite` (biggest free quota). The frontend agent lives
   in `components/VoiceAssistant.jsx` (browser STT/TTS); in-workspace actions flow
@@ -145,8 +155,9 @@ Brivo is a conversational agent (Google Gemini) that **drives the UI**, not the
 backend. `internal/agent` sends the message history + a `Context` snapshot of the
 current app state to Gemini with `responseMimeType: application/json`, and parses
 back `{reply, actions[]}`. The backend returns that verbatim over `POST /api/chat`;
-the **frontend executes the actions** (`create_session`, `select_frame`, `set_roi`,
-`super_res`, `holistic`, `super_saiyan`, `open_history`, ...).
+the **frontend executes the actions** (`create_session`, `select_camera`,
+`select_frame`, `set_roi`, `super_res`, `gemini_enhance`, `holistic`,
+`super_saiyan`, `open_history`, ...).
 
 - The list of valid action types + their params lives in the `systemPrompt` in
   `internal/agent/agent.go`. Adding a UI capability means updating BOTH that prompt
@@ -172,7 +183,8 @@ the **frontend executes the actions** (`create_session`, `select_frame`, `set_ro
 - Tables: **`trials`** (one row per enhancement), **`users`** (bcrypt), **`sessions`**
   (user_id, name, auth_key, expires_at = +24h), **`images`** (one row per downloaded
   preview). Migrations: `000001_init` (trials), `000002_auth` (users, sessions),
-  `000003_images` (images), `000004_image_caption` (Gemini caption columns).
+  `000003_images` (images), `000004_image_caption` (Gemini caption columns),
+  `000005_trial_engine` (`trials.engine`: `dummy`|`gemini`).
   `trials`/`users`/`sessions` use `gorm.Model`
   (`id/created_at/updated_at/deleted_at` — do not redeclare). **`images` is the
   exception:** its `id` is a **TEXT uuid** (not a bigint) so the frontend can

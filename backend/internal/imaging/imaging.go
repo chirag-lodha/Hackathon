@@ -5,6 +5,7 @@
 package imaging
 
 import (
+	"bytes"
 	"hash/fnv"
 	"image"
 	"image/color"
@@ -326,6 +327,15 @@ func SavePNG(img image.Image, path string) error {
 	}
 	defer f.Close()
 	return png.Encode(f, img)
+}
+
+// PNGBytes encodes an image to PNG bytes in memory.
+func PNGBytes(img image.Image) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // LoadPNG reads a PNG file from disk.

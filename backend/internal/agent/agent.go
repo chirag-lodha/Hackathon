@@ -56,18 +56,23 @@ type Agent struct {
 	apiKey       string
 	model        string // chat model
 	captionModel string // vision model for preview captions
+	imageModel   string // image-generation model ("Nano Banana")
 	http         *http.Client
 }
 
-func New(apiKey, model, captionModel string) *Agent {
+func New(apiKey, model, captionModel, imageModel string) *Agent {
 	if captionModel == "" {
 		captionModel = model
 	}
-	return &Agent{apiKey: apiKey, model: model, captionModel: captionModel, http: &http.Client{Timeout: 30 * time.Second}}
+	return &Agent{apiKey: apiKey, model: model, captionModel: captionModel, imageModel: imageModel,
+		http: &http.Client{Timeout: 90 * time.Second}}
 }
 
 // Enabled reports whether a Gemini key is configured.
 func (a *Agent) Enabled() bool { return a.apiKey != "" }
+
+// ImageEnabled reports whether Gemini image generation is available.
+func (a *Agent) ImageEnabled() bool { return a.apiKey != "" && a.imageModel != "" }
 
 const systemPrompt = `You are "Brivo", the upbeat voice assistant inside Brivo Lumina, a camera
 super-resolution app. Talk like a warm, friendly helper — NOT a robotic chatbot.
@@ -93,7 +98,8 @@ Available actions (use only these "type" values):
 - "select_frame": params {position: "first"|"middle"|"last"}. Picks a frame from the strip.
 - "set_roi": params {x, y, w, h} all normalized 0..1 (region of interest on the frame).
 - "clear_roi": params {}.
-- "super_res": params {}. Enhances the selected frame (uses ROI if set).
+- "super_res": params {}. Enhances the selected frame with the fast built-in upscaler (uses ROI if set).
+- "gemini_enhance": params {}. Enhances the selected frame using Gemini's image model ("Nano Banana") for AI high-res (uses ROI if set).
 - "holistic": params {}. Fuses all cameras at the location.
 - "super_saiyan": params {}. Shows the holistic fusion as an interactive 3D scene.
 - "open_history": params {}. Opens the history gallery.
@@ -258,4 +264,62 @@ func (a *Agent) Describe(ctx context.Context, img []byte, mimeType string) (stri
 		}
 	}
 	return strings.TrimSpace(sb.String()), nil
+}
+
+// GenerateImage sends an input image + instruction to Gemini's image model
+// ("Nano Banana") and returns the generated image bytes and its mime type.
+func (a *Agent) GenerateImage(ctx context.Context, img []byte, mimeType, prompt string) ([]byte, string, error) {
+	if !a.ImageEnabled() {
+		return nil, "", fmt.Errorf("gemini image model not configured")
+	}
+	if mimeType == "" {
+		mimeType = "image/png"
+	}
+
+	body := geminiReq{
+		Contents: []geminiContent{{
+			Role: "user",
+			Parts: []geminiPart{
+				{Text: prompt},
+				{InlineData: &geminiBlob{MIMEType: mimeType, Data: base64.StdEncoding.EncodeToString(img)}},
+			},
+		}},
+		GenerationConfig: map[string]any{"responseModalities": []string{"IMAGE"}},
+	}
+	buf, _ := json.Marshal(body)
+
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", a.imageModel, a.apiKey)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
+	if err != nil {
+		return nil, "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	res, err := a.http.Do(httpReq)
+	if err != nil {
+		return nil, "", fmt.Errorf("gemini image request: %w", err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+
+	var gr geminiResp
+	if err := json.Unmarshal(raw, &gr); err != nil {
+		return nil, "", fmt.Errorf("gemini image decode: %w", err)
+	}
+	if gr.Error != nil {
+		return nil, "", fmt.Errorf("gemini image error: %s", gr.Error.Message)
+	}
+	if len(gr.Candidates) == 0 {
+		return nil, "", fmt.Errorf("gemini image: empty response")
+	}
+	for _, p := range gr.Candidates[0].Content.Parts {
+		if p.InlineData != nil && p.InlineData.Data != "" {
+			out, derr := base64.StdEncoding.DecodeString(p.InlineData.Data)
+			if derr != nil {
+				return nil, "", fmt.Errorf("gemini image: decode data: %w", derr)
+			}
+			return out, p.InlineData.MIMEType, nil
+		}
+	}
+	return nil, "", fmt.Errorf("gemini image: no image in response")
 }

@@ -82,7 +82,15 @@ func (s *Server) handleSuperResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pick the engine: "gemini" (Nano Banana) if requested AND available, else the
+	// built-in upscaler. Falling back keeps the request working when Gemini is off.
+	engine := "dummy"
+	if req.Engine == "gemini" && s.engine.GeminiAvailable() {
+		engine = "gemini"
+	}
+
 	trial := s.newTrial("super_res", req.CameraESN, req.SessionName, req.ImagePath, req.FrameTimestamp, req.FrameLabel, req.ROI)
+	trial.Engine = engine
 	if err := s.repo.CreateTrial(trial); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not create trial: "+err.Error())
 		return
@@ -93,10 +101,11 @@ func (s *Server) handleSuperResolve(w http.ResponseWriter, r *http.Request) {
 	s.hires.Submit(&hires.HiRes{TrialID: trial.ID})
 
 	writeJSON(w, http.StatusAccepted, types.SuperResolveResponse{
-		ID:    fmt.Sprint(trial.ID),
-		Type:  "super_res",
-		State: trial.State, // CREATED — poll GET /api/trials/{id} for the result
-		ROI:   req.ROI,
+		ID:     fmt.Sprint(trial.ID),
+		Type:   "super_res",
+		Engine: engine,
+		State:  trial.State, // CREATED — poll GET /api/trials/{id} for the result
+		ROI:    req.ROI,
 	})
 }
 
@@ -116,6 +125,7 @@ func (s *Server) handleTrialStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, types.TrialStatusResponse{
 		ID:        fmt.Sprint(t.ID),
 		Type:      t.Type,
+		Engine:    t.Engine,
 		State:     t.State,
 		ImageURL:  t.ResultURL,
 		SourceURL: t.SourceURL,

@@ -134,10 +134,10 @@ export default function Workspace() {
     setSuperSaiyan(false)
   }
 
-  // Standard 2D ops (Super-Res / Holistic) — exit 3D first.
-  const run2D = (op) => {
+  // Standard 2D ops (Super-Res / Gemini / Holistic) — exit 3D first.
+  const run2D = (op, engine) => {
     setSuperSaiyan(false)
-    runOp(op)
+    runOp(op, engine)
   }
 
   // Super-Saiyan: toggle the 3D holistic stage. Runs holistic if we don't
@@ -152,13 +152,13 @@ export default function Workspace() {
   }
 
   const runOp = useCallback(
-    async (op) => {
+    async (op, engine) => {
       if (!selected) return
       setMode(op)
       setResultLoading(true)
       setResultError(null)
       setResult(null)
-      setProcNote(op === 'holistic' ? '' : 'Queued…')
+      setProcNote(op === 'holistic' ? '' : engine === 'gemini' ? 'Asking Gemini…' : 'Queued…')
       try {
         const params = {
           imagePath: selected.path,
@@ -167,6 +167,7 @@ export default function Workspace() {
           frameTimestamp: selected.timestamp,
           frameLabel: selected.label,
           roi,
+          engine, // '' | 'dummy' | 'gemini' (Nano Banana) — ignored for holistic
         }
         // Super-res is async: submit → poll → SUCCESS. Holistic is synchronous.
         const res =
@@ -241,7 +242,8 @@ export default function Workspace() {
         break
       }
       case 'clear_roi': setRoi(null); shiftCommand(); break
-      case 'super_res': if (ensureFrame()) { run2D('super_res'); shiftCommand() } break
+      case 'super_res': if (ensureFrame()) { run2D('super_res', cmd.params?.engine); shiftCommand() } break
+      case 'gemini_enhance': if (ensureFrame()) { run2D('super_res', 'gemini'); shiftCommand() } break
       case 'holistic': if (ensureFrame()) { run2D('holistic'); shiftCommand() } break
       case 'super_saiyan': if (ensureFrame()) { runSuperSaiyan(); shiftCommand() } break
       default: shiftCommand(); break
@@ -347,11 +349,15 @@ export default function Workspace() {
                 </div>
 
                 <div className="ws-actions">
-                  <button className={`ws-action ${!superSaiyan && mode === 'super_res' && result ? 'active' : ''}`} onClick={() => run2D('super_res')} disabled={resultLoading}>
+                  <button className={`ws-action ${!superSaiyan && mode === 'super_res' && result && result.engine !== 'gemini' ? 'active' : ''}`} onClick={() => run2D('super_res', 'dummy')} disabled={resultLoading}>
                     <div className="ws-action-ico"><Wand2 size={20} /></div>
-                    <div className="ws-action-txt"><strong>Super-Res</strong><span>Enhance this frame to high resolution</span></div>
+                    <div className="ws-action-txt"><strong>Super-Res</strong><span>Fast built-in upscale to high resolution</span></div>
                   </button>
-                  <button className={`ws-action ${!superSaiyan && mode === 'holistic' && result ? 'active' : ''}`} onClick={() => run2D('holistic')} disabled={resultLoading}>
+                  <button className={`ws-action gm-action ${!superSaiyan && mode === 'super_res' && result && result.engine === 'gemini' ? 'active' : ''}`} onClick={() => run2D('super_res', 'gemini')} disabled={resultLoading}>
+                    <div className="ws-action-ico gm"><Sparkles size={20} /></div>
+                    <div className="ws-action-txt"><strong>Gemini Enhance</strong><span>AI high-res via Gemini “Nano Banana”</span></div>
+                  </button>
+                  <button className={`ws-action hol-action ${!superSaiyan && mode === 'holistic' && result ? 'active' : ''}`} onClick={() => run2D('holistic')} disabled={resultLoading}>
                     <div className="ws-action-ico alt"><Layers size={20} /></div>
                     <div className="ws-action-txt"><strong>Holistic View</strong><span>Fuse all cameras on this location</span></div>
                   </button>
@@ -426,6 +432,9 @@ export default function Workspace() {
         .ws-action:disabled { opacity: .5; cursor: wait; }
         .ws-action-ico { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-grad); color: #fff; }
         .ws-action-ico.alt { background: linear-gradient(135deg, #4ad6ff, #3ddc97); }
+        .ws-action-ico.gm { background: linear-gradient(135deg, #ffd454, #a855f7 60%, #4285f4); color: #fff; }
+        .gm-action.active { border-color: rgba(168,85,247,.6); box-shadow: 0 0 0 2px rgba(168,85,247,.22); }
+        .hol-action { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 14px; }
 
         /* Super-Saiyan: full-width golden energy action */
         .ss-action { position: relative; grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 14px; overflow: hidden; }

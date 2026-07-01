@@ -85,8 +85,14 @@ func (h *HiRes) execute() {
 			trial.ResultURL = res.OutputURL
 			trial.Sources = store.MarshalSources(res.Sources)
 			trial.DurationMS = res.MS
-		default: // "super_res"
-			res, err := h.engine.SuperResolve(trial.FilePath, roi)
+		default: // "super_res" — either the built-in upscaler or Gemini ("Nano Banana")
+			var res model.SuperResult
+			var err error
+			if trial.Engine == "gemini" {
+				res, err = h.engine.GeminiEnhance(trial.FilePath, roi)
+			} else {
+				res, err = h.engine.SuperResolve(trial.FilePath, roi)
+			}
 			if err != nil {
 				_ = h.repo.Fail(trial.ID, err.Error())
 				return

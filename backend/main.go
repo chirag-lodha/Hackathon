@@ -43,9 +43,10 @@ func main() {
 
 	cam := camera.New(cfg, st)
 	eng := model.NewEngine(cfg, st)
-	ag := agent.New(cfg.GeminiAPIKey, cfg.GeminiModel, cfg.GeminiCaptionModel)
+	ag := agent.New(cfg.GeminiAPIKey, cfg.GeminiModel, cfg.GeminiCaptionModel, cfg.GeminiImageModel)
+	eng.SetImageGenerator(ag) // enables the Gemini ("Nano Banana") super-res engine
 	if ag.Enabled() {
-		log.Printf("Brivo agent enabled (chat: %s, caption: %s)", cfg.GeminiModel, cfg.GeminiCaptionModel)
+		log.Printf("Brivo agent enabled (chat: %s, caption: %s, image: %s)", cfg.GeminiModel, cfg.GeminiCaptionModel, cfg.GeminiImageModel)
 	} else {
 		log.Printf("Brivo agent disabled (set GEMINI_API_KEY to enable)")
 	}

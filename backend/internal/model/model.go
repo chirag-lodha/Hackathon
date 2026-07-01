@@ -10,9 +10,13 @@
 package model
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"image"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"lumina/internal/config"
@@ -45,11 +49,20 @@ type Upscaler interface {
 	Upscale(srcRel string, roi *types.ROI) (SuperResult, error)
 }
 
+// ImageGenerator turns an input image + instruction into a new image. Gemini's
+// image model ("Nano Banana") implements this; kept as an interface so the model
+// package doesn't import the agent package directly (wired in main.go).
+type ImageGenerator interface {
+	ImageEnabled() bool
+	GenerateImage(ctx context.Context, img []byte, mime, prompt string) (out []byte, outMime string, err error)
+}
+
 // Engine wires the upscaler to storage + config and adds the holistic op.
 type Engine struct {
-	cfg   *config.Config
-	store *store.Store
-	up    Upscaler
+	cfg      *config.Config
+	store    *store.Store
+	up       Upscaler
+	imageGen ImageGenerator // optional; enables the Gemini super-res engine
 }
 
 func NewEngine(cfg *config.Config, st *store.Store) *Engine {
@@ -60,9 +73,100 @@ func NewEngine(cfg *config.Config, st *store.Store) *Engine {
 	}
 }
 
+// SetImageGenerator wires in the Gemini image generator (Nano Banana).
+func (e *Engine) SetImageGenerator(g ImageGenerator) { e.imageGen = g }
+
+// GeminiAvailable reports whether the Gemini super-res engine can be used.
+func (e *Engine) GeminiAvailable() bool { return e.imageGen != nil && e.imageGen.ImageEnabled() }
+
 // SuperResolve enhances a single frame (optionally constrained to an ROI).
 func (e *Engine) SuperResolve(srcRel string, roi *types.ROI) (SuperResult, error) {
 	return e.up.Upscale(srcRel, roi)
+}
+
+// geminiPrompt instructs the image model to upscale/restore the frame.
+const geminiPrompt = `Enhance this security-camera frame into a sharp, high-resolution, richly detailed photograph. ` +
+	`Recover fine detail and reduce noise/blur, but keep the EXACT same scene, framing, perspective, objects and people. ` +
+	`Do not add, remove, or invent anything that is not already present. Output only the enhanced image.`
+
+// GeminiEnhance runs the Gemini image model ("Nano Banana") on a frame (optionally
+// cropped to the ROI) and saves the returned high-res image. Returns an error (so
+// the trial fails cleanly) if Gemini is unconfigured or the call fails.
+func (e *Engine) GeminiEnhance(srcRel string, roi *types.ROI) (SuperResult, error) {
+	if !e.GeminiAvailable() {
+		return SuperResult{}, fmt.Errorf("Gemini image engine is not configured")
+	}
+	start := time.Now()
+
+	abs, err := e.store.Abs(srcRel)
+	if err != nil {
+		return SuperResult{}, err
+	}
+	src, err := imaging.LoadPNG(abs)
+	if err != nil {
+		return SuperResult{}, fmt.Errorf("load source %q: %w", srcRel, err)
+	}
+
+	// Crop to the ROI first so Gemini enhances (and we compare) the same region.
+	work := src
+	sourceRel := srcRel
+	if roi != nil && roi.W > 0 && roi.H > 0 {
+		work = imaging.Crop(src, roi.X, roi.Y, roi.W, roi.H)
+		cropRel := filepath.ToSlash(filepath.Join("outputs", fmt.Sprintf("src-%d.png", time.Now().UnixNano())))
+		if absSrc, err := e.store.Abs(cropRel); err == nil {
+			if err := imaging.SavePNG(work, absSrc); err == nil {
+				sourceRel = cropRel
+			}
+		}
+	}
+
+	inBytes, err := imaging.PNGBytes(work)
+	if err != nil {
+		return SuperResult{}, fmt.Errorf("encode source: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Second)
+	defer cancel()
+	outBytes, outMime, err := e.imageGen.GenerateImage(ctx, inBytes, "image/png", geminiPrompt)
+	if err != nil {
+		return SuperResult{}, err
+	}
+
+	ext := ".png"
+	if strings.Contains(outMime, "jpeg") || strings.Contains(outMime, "jpg") {
+		ext = ".jpg"
+	}
+	outRel := filepath.ToSlash(filepath.Join("outputs", fmt.Sprintf("gemini-%d%s", time.Now().UnixNano(), ext)))
+	outAbs, err := e.store.Abs(outRel)
+	if err != nil {
+		return SuperResult{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(outAbs), 0o755); err != nil {
+		return SuperResult{}, err
+	}
+	if err := os.WriteFile(outAbs, outBytes, 0o644); err != nil {
+		return SuperResult{}, fmt.Errorf("save output: %w", err)
+	}
+
+	// Report the scale relative to the (possibly cropped) input, when decodable.
+	outW, outH, scale := 0, 0, 0
+	if img, _, derr := image.Decode(bytes.NewReader(outBytes)); derr == nil {
+		b := img.Bounds()
+		outW, outH = b.Dx(), b.Dy()
+		if wb := work.Bounds(); wb.Dx() > 0 {
+			scale = outW / wb.Dx()
+		}
+	}
+
+	return SuperResult{
+		OutputPath: outRel,
+		OutputURL:  e.store.URL(outRel),
+		SourceURL:  e.store.URL(sourceRel),
+		Width:      outW,
+		Height:     outH,
+		Scale:      scale,
+		MS:         time.Since(start).Milliseconds(),
+	}, nil
 }
 
 // Holistic simulates fusing all cameras pointing at the same location into one

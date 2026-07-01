@@ -68,9 +68,12 @@ type Config struct {
 	// GeminiModel: chat model, e.g. gemini-2.0-flash / gemini-2.5-flash-lite.
 	// GeminiCaptionModel: vision model for preview captions — defaults to
 	// gemini-2.5-flash-lite (biggest free quota), since captioning is high-volume.
+	// GeminiImageModel: image-generation model ("Nano Banana") for the Gemini
+	// super-res engine — defaults to gemini-2.5-flash-image.
 	GeminiAPIKey       string
 	GeminiModel        string
 	GeminiCaptionModel string
+	GeminiImageModel   string
 
 	// AuthSecret signs the login cookie. Set LUMINA_AUTH_SECRET in production.
 	AuthSecret string
@@ -110,6 +113,7 @@ func Load() *Config {
 		GeminiAPIKey:       getenv("GEMINI_API_KEY", ""),
 		GeminiModel:        getenv("GEMINI_MODEL", "gemini-2.0-flash"),
 		GeminiCaptionModel: getenv("GEMINI_CAPTION_MODEL", "gemini-2.5-flash-lite"),
+		GeminiImageModel:   getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image"),
 		AuthSecret:    getenv("LUMINA_AUTH_SECRET", "lumina-dev-secret-change-me"),
 	}
 	return c

@@ -185,7 +185,11 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 - Landing, Login, New Session, Camera grid, Workspace, and History pages
 - Frame window with **infinite filmstrip paging** (walks prev/next, de-duped)
 - **ROI drawing** on the source frame (normalized, resolution-independent)
-- **Super-Res** and **Holistic View** operations, with auto re-run on ROI change
+- **Super-Res** (fast built-in upscaler), **Gemini Enhance** (AI high-res via the
+  Gemini 2.5 Flash Image model, "Nano Banana"), and **Holistic View** — with auto
+  re-run on ROI change. *Gemini image generation is not on the free tier; the
+  Gemini Enhance option needs a key with billing enabled and otherwise fails
+  gracefully with a clear message while Super-Res/Holistic keep working.*
 - **Before/after compare slider** and holistic composite + source cameras
 - **History gallery** + full-screen lightbox with keyboard navigation
 - **Super-Saiyan mode** — view a holistic result as an orbitable 3D scene (main
@@ -281,7 +285,7 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 | POST | `/api/previews` | `{sessionId, cameraEsn, aroundTs?, direction?, count?, authKey?}` | `{previews:[{imageId,ts,state}], oldestTs, newestTs}` — walks prev/next; `direction` = `around`/`older`/`newer` |
 | GET | `/api/image/status` | `?imageId=` | `{id, state, ts, error?, caption?, captionState?}` — poll a preview download (and its Gemini caption) |
 | GET | `/api/images` | `?imageId=` | the downloaded preview JPEG (or `202` if not ready) |
-| POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?}` | **`202`** `{id, type, state:"CREATED", roi}` — enqueued; poll for the result |
+| POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?, engine?}` | **`202`** `{id, type, engine, state:"CREATED", roi}` — enqueued; poll for the result. `engine` = `dummy` (built-in) or `gemini` (Nano Banana) |
 | GET | `/api/trials/{id}` | — | `{id, type, state, imageUrl?, sourceUrl?, scale?, sources?, roi, ms, error?}` — poll an async trial |
 | POST | `/api/alternate` | `{imagePath, cameraEsn, sessionName?, ..., roi?}` | `{id, state, imageUrl, sources[], ms}` — holistic (synchronous) |
 | POST | `/api/history` | `{}` | `{records[]}` — successful trials, newest first |
@@ -352,11 +356,15 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
   and reads the `x-ee-timestamp` / `x-ee-prev` / `x-ee-next` headers to walk frames.
   Downloaded JPEGs are stored under `data/sessions/{id}/images/`. The old dummy
   synthesizer in `internal/camera` is kept only for the legacy `/api/frames` route.
-- **Super-resolution** (`internal/model`): still a **stand-in**. `DummyUpscaler`
-  regenerates *generated* `.png` scenes at high resolution (a soft source can't be
-  sharpened into detail), and for **real `.jpg` previews** falls back to a load →
-  crop → sharpen-upscale pass. Output is written to `data/outputs/`. **Later:**
-  implement the `Upscaler` interface with a real model and swap it in `NewEngine`.
+- **Super-resolution** (`internal/model`): two engines, chosen per request via the
+  `engine` field. **`dummy`** (default) is the built-in stand-in — regenerates
+  *generated* `.png` scenes at high resolution, and for **real `.jpg` previews**
+  does a load → crop → sharpen-upscale pass. **`gemini`** sends the frame to Gemini
+  2.5 Flash Image ("Nano Banana") and saves the AI-generated high-res result
+  (`Engine.GeminiEnhance` → `agent.GenerateImage`). Both write to `data/outputs/`.
+  The Gemini engine is **real** but needs a billed key (image generation is not
+  free-tier); it fails cleanly to a `FAILURE` trial otherwise. **Later:** the
+  `Upscaler` interface still lets you swap in another local model in `NewEngine`.
 - **Holistic** (`internal/model`): derives co-located cameras from the ESN and
   composites enhanced views. **Later:** resolve the real camera set for the location
   and fuse their frames.
@@ -378,6 +386,7 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
 | `GEMINI_API_KEY` | _(empty)_ | Brivo AI assistant — free key from Google AI Studio |
 | `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini chat model — use `gemini-2.5-flash-lite` (biggest free quota) |
 | `GEMINI_CAPTION_MODEL` | `gemini-2.5-flash-lite` | Gemini **vision** model for preview captions (high-volume; kept on a high-quota model) |
+| `GEMINI_IMAGE_MODEL` | `gemini-2.5-flash-image` | Gemini **image-generation** model ("Nano Banana") for the Gemini super-res engine (requires billing — not free-tier) |
 
 ---
 

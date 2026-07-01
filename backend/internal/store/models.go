@@ -61,8 +61,9 @@ type Trial struct {
 	FrameLabel     string     `gorm:"column:frame_label"`
 	Coords         JSONB  `gorm:"column:coords"` // ROI as [{x,y},{x,y}]; null = full frame
 
-	State string `gorm:"column:state"`
-	Type  string `gorm:"column:type"` // super_res | holistic
+	State  string `gorm:"column:state"`
+	Type   string `gorm:"column:type"`   // super_res | holistic
+	Engine string `gorm:"column:engine"` // super_res engine: "" | "dummy" | "gemini"
 
 	ResultPath string `gorm:"column:result_path"`
 	ResultURL  string `gorm:"column:result_url"`
