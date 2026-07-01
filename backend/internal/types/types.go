@@ -191,6 +191,9 @@ type ImageStatusResponse struct {
 	State string `json:"state"` // PROCESSING | SUCCESS | FAILURE
 	Ts    string `json:"ts"`    // EEN timestamp (once known)
 	Error string `json:"error,omitempty"`
+	// Gemini vision caption (filled in async after the image downloads).
+	Caption      string `json:"caption,omitempty"`
+	CaptionState string `json:"captionState,omitempty"` // "" | PROCESSING | SUCCESS | FAILURE
 }
 
 // PreviewsRequest asks for N preview frames around a camera's current frame,

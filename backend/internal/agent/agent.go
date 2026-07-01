@@ -9,10 +9,12 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -101,9 +103,21 @@ Rules:
 - If the user just chats or you need info, return a reply with an empty actions array and ask for what you need.
 - Current app context will be provided; use it to decide what is possible.`
 
+// captionPrompt asks Gemini to describe a single surveillance frame in one line.
+const captionPrompt = `You are analyzing ONE still frame from a security/surveillance camera.
+In a single concise sentence (max ~18 words), describe what is visible — people,
+vehicles, notable objects, and the general scene. Be factual and specific; do not
+guess identities. If the frame is blank, black, or too dark/blurry to read, say
+"No clear scene — the frame is dark or empty." Reply with the sentence only, no preamble.`
+
 // gemini wire types (minimal)
+type geminiBlob struct {
+	MIMEType string `json:"mimeType"`
+	Data     string `json:"data"` // base64
+}
 type geminiPart struct {
-	Text string `json:"text"`
+	Text       string      `json:"text,omitempty"`
+	InlineData *geminiBlob `json:"inlineData,omitempty"`
 }
 type geminiContent struct {
 	Role  string       `json:"role,omitempty"`
@@ -184,4 +198,60 @@ func (a *Agent) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error)
 		return ChatResponse{Reply: out}, nil
 	}
 	return parsed, nil
+}
+
+// Describe sends an image to Gemini vision and returns a one-line description of
+// what is visible in the frame. mimeType is e.g. "image/jpeg".
+func (a *Agent) Describe(ctx context.Context, img []byte, mimeType string) (string, error) {
+	if !a.Enabled() {
+		return "", fmt.Errorf("agent not configured")
+	}
+	if mimeType == "" {
+		mimeType = "image/jpeg"
+	}
+
+	body := geminiReq{
+		Contents: []geminiContent{{
+			Role: "user",
+			Parts: []geminiPart{
+				{Text: captionPrompt},
+				{InlineData: &geminiBlob{MIMEType: mimeType, Data: base64.StdEncoding.EncodeToString(img)}},
+			},
+		}},
+		GenerationConfig: map[string]any{"temperature": 0.2},
+	}
+	buf, _ := json.Marshal(body)
+
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", a.model, a.apiKey)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	res, err := a.http.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("gemini vision request: %w", err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+
+	var gr geminiResp
+	if err := json.Unmarshal(raw, &gr); err != nil {
+		return "", fmt.Errorf("gemini vision decode: %w", err)
+	}
+	if gr.Error != nil {
+		return "", fmt.Errorf("gemini vision error: %s", gr.Error.Message)
+	}
+	if len(gr.Candidates) == 0 || len(gr.Candidates[0].Content.Parts) == 0 {
+		return "", fmt.Errorf("gemini vision: empty response")
+	}
+	// Join all text parts (thinking models may emit a thought part before the answer).
+	var sb strings.Builder
+	for _, p := range gr.Candidates[0].Content.Parts {
+		if p.Text != "" {
+			sb.WriteString(p.Text)
+		}
+	}
+	return strings.TrimSpace(sb.String()), nil
 }

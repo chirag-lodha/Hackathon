@@ -97,8 +97,12 @@ holistic runs it inline.
     and start `downloadPreviewAsync` (goroutine, bounded by `Server.dlSem`) which
     picks the archiver, fetches the latest preview, writes it to
     `sessions/{id}/images/{imageId}.jpeg`, and sets the row `SUCCESS`/`FAILURE`.
-  - UI polls `GET /api/image/status?imageId=` then loads `GET /api/images?imageId=`
-    (serves the JPEG, or `202` until ready).
+    Once the JPEG is saved, `captionAsync` (bounded by `Server.capSem`) asks Gemini
+    vision (`agent.Describe`) to describe the frame and stores it on the row
+    (`ImageCaptioning` → `ImageCaptioned`); no-op if the agent is unconfigured.
+  - UI polls `GET /api/image/status?imageId=` (returns `caption` + `captionState`
+    too) then loads `GET /api/images?imageId=` (serves the JPEG, or `202` until ready).
+    The frontend hook `useImageCaption` polls status until the caption resolves.
   - `POST /api/previews {sessionId, cameraEsn, aroundTs, direction, count}` walks
     prev/next to fetch a window (`around` = anchor + N each side; `older`/`newer` for
     filmstrip paging). Each fetched frame is saved as a SUCCESS `images` row.
@@ -123,7 +127,9 @@ holistic runs it inline.
   `GET /api/me` restores the user; `POST /api/sessions` stores a user-owned session
   (name + camera auth key, 24h). Cookies are same-origin (work through the Vite proxy).
 - **Brivo voice agent** (`internal/agent`): `POST /api/chat` sends the conversation +
-  app context to Gemini and returns `{reply, actions[]}`. Needs `GEMINI_API_KEY` in
+  app context to Gemini and returns `{reply, actions[]}`. The same package also has
+  `Agent.Describe(ctx, jpeg, mime)` — a **Gemini vision** call (inline image part,
+  plain-text reply) used to caption every downloaded preview. Needs `GEMINI_API_KEY` in
   `backend/.env` (gitignored; loaded by `config.loadDotEnv`); use
   `GEMINI_MODEL=gemini-2.5-flash-lite` (biggest free quota). The frontend agent lives
   in `components/VoiceAssistant.jsx` (browser STT/TTS); in-workspace actions flow
@@ -162,12 +168,14 @@ the **frontend executes the actions** (`create_session`, `select_frame`, `set_ro
 - Tables: **`trials`** (one row per enhancement), **`users`** (bcrypt), **`sessions`**
   (user_id, name, auth_key, expires_at = +24h), **`images`** (one row per downloaded
   preview). Migrations: `000001_init` (trials), `000002_auth` (users, sessions),
-  `000003_images` (images). `trials`/`users`/`sessions` use `gorm.Model`
+  `000003_images` (images), `000004_image_caption` (Gemini caption columns).
+  `trials`/`users`/`sessions` use `gorm.Model`
   (`id/created_at/updated_at/deleted_at` — do not redeclare). **`images` is the
   exception:** its `id` is a **TEXT uuid** (not a bigint) so the frontend can
   reference a download before it completes — set it via `store.NewUUID()`, don't use
   `gorm.Model`. Repo helpers: `CreateImage`, `GetImage`, `ImageDone(id,path,eenTs)`,
-  `ImageFailed(id,msg)`.
+  `ImageFailed(id,msg)`, `ImageCaptioning(id)` / `ImageCaptioned(id,caption,ok)`.
+  Migration `000004_image_caption` adds `caption` + `caption_state` (Gemini vision).
 - **State lifecycle**: `CREATED` → `PROCESSING` → `SUCCESS`/`FAILURE`.
   - **`super_res` is async** (return-then-poll): `POST /api/super-resolve` creates
     the trial as `CREATED`, enqueues it on the **HiRes processor** (`internal/hires`),

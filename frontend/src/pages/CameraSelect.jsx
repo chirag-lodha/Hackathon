@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Cctv, Clock, Loader2, Wifi, WifiOff, ImageOff, ArrowRight } from 'lucide-react'
+import { ArrowLeft, Cctv, Clock, Loader2, Wifi, WifiOff, ImageOff, ArrowRight, Sparkles } from 'lucide-react'
 import Logo from '../components/Logo.jsx'
 import { useSession } from '../context/SessionContext.jsx'
 import { fetchCameras, imageStatus, imageURL } from '../api/client.js'
+import { useImageCaption } from '../hooks/useImageCaption.js'
 
 const fade = { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -12 } }
 
@@ -121,6 +122,9 @@ function CameraTile({ cam, delay, onOpen }) {
     return () => clearInterval(timer.current)
   }, [cam.imageId])
 
+  // Gemini vision caption — only once the preview itself is downloaded.
+  const { caption } = useImageCaption(cam.imageId, state === 'SUCCESS')
+
   const off = cam.status === 'offline'
   return (
     <motion.button
@@ -140,6 +144,9 @@ function CameraTile({ cam, delay, onOpen }) {
           <div className="cam-ph loading"><Loader2 size={22} className="spin-ico" /><span>loading…</span></div>
         )}
         <span className={`cam-status ${cam.status}`}>{off ? <WifiOff size={11} /> : <Wifi size={11} />} {cam.status}</span>
+        {state === 'SUCCESS' && caption && (
+          <div className="cam-caption"><Sparkles size={11} /> <span>{caption}</span></div>
+        )}
         {state === 'SUCCESS' && !off && <div className="cam-hover"><ArrowRight size={20} /></div>}
       </div>
       <div className="cam-body">
@@ -163,6 +170,9 @@ function CameraTile({ cam, delay, onOpen }) {
         .cam-status.offline { background: rgba(255,93,115,.2); color: #ffb3bd; border: 1px solid rgba(255,93,115,.4); }
         .cam-hover { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(124,92,255,.25); color: #fff; opacity: 0; transition: opacity .2s; }
         .cam-card:hover:not(:disabled) .cam-hover { opacity: 1; }
+        .cam-caption { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: flex-start; gap: 5px; padding: 16px 10px 8px; font-size: 11px; line-height: 1.35; color: #eef; background: linear-gradient(to top, rgba(0,0,0,.82), rgba(0,0,0,0)); }
+        .cam-caption svg { flex-shrink: 0; margin-top: 2px; color: var(--accent-2); }
+        .cam-caption span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
         .cam-body { padding: 13px 14px; }
         .cam-body strong { display: block; font-size: 14px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .cam-meta { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-2); }

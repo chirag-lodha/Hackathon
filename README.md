@@ -90,9 +90,11 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
    (bounded by a semaphore) that picks the healthiest **archiver**
    (`brivo.Archiver`), downloads the latest preview (`brivo.FetchPreview`), writes
    it to `sessions/{id}/images/{imageId}.jpeg`, and flips the row to `SUCCESS`.
-2. The UI polls `GET /api/image/status?imageId=…` until `SUCCESS`/`FAILURE`, then
-   loads the image from `GET /api/images?imageId=…`.
-3. Opening a camera calls `POST /api/previews` which walks the archiver's
+2. Once a preview lands, a background worker (bounded, rate-limit friendly) asks
+   **Gemini vision** to describe the frame and stores the caption on the row.
+3. The UI polls `GET /api/image/status?imageId=…` until `SUCCESS`/`FAILURE`, then
+   loads the image from `GET /api/images?imageId=…` and shows the caption when ready.
+4. Opening a camera calls `POST /api/previews` which walks the archiver's
    `prev`/`next` links (`x-ee-prev` / `x-ee-next` headers) to fetch N frames around
    the chosen moment; scrolling the filmstrip fetches more `older`/`newer`.
 
@@ -171,6 +173,10 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
   auth key lives server-side with the session (the UI only passes `sessionId`)
 - **Async preview downloads** — cameras return immediately with a per-camera
   `imageId`; previews download on background goroutines and the UI polls status
+- **Gemini vision captions** — every downloaded preview is described by Gemini
+  ("what's in this frame") on a background worker; the caption shows on the camera
+  tile and under the workspace stage (uses the same `GEMINI_API_KEY`; degrades
+  gracefully to no caption if unset or rate-limited)
 - **Brivo voice assistant** — a Gemini-powered agent (hands-free voice or typed)
   that drives the whole UI: sessions, frame select, ROI, Super-Res, Holistic, 3D
 - Landing, Login, New Session, Camera grid, Workspace, and History pages
@@ -257,6 +263,8 @@ One row per downloaded preview frame (`000003_images`). The `id` is a **uuid**
 | `state` | text | `PROCESSING` / `SUCCESS` / `FAILURE` |
 | `path` | text | on-disk path once downloaded |
 | `error` | text | message on FAILURE |
+| `caption` | text | Gemini vision description of the frame (async) |
+| `caption_state` | text | `''` / `PROCESSING` / `SUCCESS` / `FAILURE` |
 
 ---
 
@@ -268,7 +276,7 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 |--------|----------|------|---------|
 | POST | `/api/cameras` | `{sessionId, authKey?}` | `{cameras:[{esn,name,location,status,imageId}], images:{esn:imageId}}` — lists account cameras; kicks off latest-preview downloads |
 | POST | `/api/previews` | `{sessionId, cameraEsn, aroundTs?, direction?, count?, authKey?}` | `{previews:[{imageId,ts,state}], oldestTs, newestTs}` — walks prev/next; `direction` = `around`/`older`/`newer` |
-| GET | `/api/image/status` | `?imageId=` | `{id, state, ts, error?}` — poll a preview download |
+| GET | `/api/image/status` | `?imageId=` | `{id, state, ts, error?, caption?, captionState?}` — poll a preview download (and its Gemini caption) |
 | GET | `/api/images` | `?imageId=` | the downloaded preview JPEG (or `202` if not ready) |
 | POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?}` | **`202`** `{id, type, state:"CREATED", roi}` — enqueued; poll for the result |
 | GET | `/api/trials/{id}` | — | `{id, type, state, imageUrl?, sourceUrl?, scale?, sources?, roi, ms, error?}` — poll an async trial |

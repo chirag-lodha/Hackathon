@@ -110,6 +110,10 @@ type Image struct {
 	State     string `gorm:"column:state"`
 	Path      string `gorm:"column:path"`
 	Error     string `gorm:"column:error"`
+
+	// Gemini vision caption (generated async once the image is downloaded).
+	Caption      string `gorm:"column:caption"`
+	CaptionState string `gorm:"column:caption_state"` // "" | PROCESSING | SUCCESS | FAILURE
 }
 
 func (Image) TableName() string { return "images" }

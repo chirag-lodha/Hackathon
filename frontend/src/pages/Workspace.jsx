@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, Cctv, Clock, Wand2, Layers, Square, XCircle, ImageIcon, Zap, Loader2, Box } from 'lucide-react'
+import { ArrowLeft, Cctv, Clock, Wand2, Layers, Square, XCircle, ImageIcon, Zap, Loader2, Box, Sparkles } from 'lucide-react'
 import Logo from '../components/Logo.jsx'
 import Filmstrip from '../components/Filmstrip.jsx'
 import RoiCanvas from '../components/RoiCanvas.jsx'
@@ -9,6 +9,7 @@ import ResultViewer from '../components/ResultViewer.jsx'
 import Holistic3D from '../components/Holistic3D.jsx'
 import { useSession } from '../context/SessionContext.jsx'
 import { superResolve, alternateOperation, fetchPreviews, imageURL } from '../api/client.js'
+import { useImageCaption } from '../hooks/useImageCaption.js'
 
 const fade = {
   initial: { opacity: 0 },
@@ -64,6 +65,9 @@ export default function Workspace() {
   const [superSaiyan, setSuperSaiyan] = useState(false)
 
   const seenIds = useRef(new Set())
+
+  // Gemini vision caption for the frame currently on the stage.
+  const { caption: frameCaption, state: captionState } = useImageCaption(selected?.id, !!selected)
 
   // Route guards: need a session (id) and a selected camera.
   useEffect(() => {
@@ -297,8 +301,20 @@ export default function Workspace() {
           )}
           {selected && !superSaiyan && (
             <div className="ws-stage-foot">
-              <span className="chip mono">{selected.label}</span>
-              <span className="ws-stage-path">{selected.path}</span>
+              <div className="ws-stage-foot-row">
+                <span className="chip mono">{selected.label}</span>
+                <span className="ws-stage-path">{selected.path}</span>
+              </div>
+              <div className="ws-caption">
+                <Sparkles size={13} />
+                {frameCaption ? (
+                  <span>{frameCaption}</span>
+                ) : captionState === 'FAILURE' ? (
+                  <span className="ws-caption-muted">No description available.</span>
+                ) : (
+                  <span className="ws-caption-muted">Analyzing the scene…</span>
+                )}
+              </div>
             </div>
           )}
         </section>
@@ -387,8 +403,12 @@ export default function Workspace() {
         .ws-stage-empty h3 { font-size: 18px; font-weight: 700; }
         .ws-stage-empty p { font-size: 13px; color: var(--text-2); }
         .ws-empty-ico { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-2); margin-bottom: 8px; border: 1px solid rgba(124,92,255,.25); }
-        .ws-stage-foot { position: absolute; top: 12px; left: 12px; display: flex; align-items: center; gap: 10px; }
+        .ws-stage-foot { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; pointer-events: none; }
+        .ws-stage-foot-row { display: flex; align-items: center; gap: 10px; }
         .ws-stage-path { font-family: var(--mono); font-size: 11px; color: var(--text-2); background: rgba(0,0,0,.5); padding: 4px 9px; border-radius: 6px; }
+        .ws-caption { max-width: min(560px, 90%); display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.45; color: #eaeaff; background: rgba(10,10,20,.62); backdrop-filter: blur(8px); border: 1px solid var(--border); padding: 8px 11px; border-radius: 9px; }
+        .ws-caption svg { flex-shrink: 0; margin-top: 2px; color: var(--accent-2); }
+        .ws-caption-muted { color: var(--text-2); font-style: italic; }
 
         .ws-panel { width: 440px; flex-shrink: 0; border-radius: var(--radius); overflow: hidden; }
         .ws-panel-scroll { height: 100%; overflow-y: auto; padding: 22px; }

@@ -1,11 +1,13 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"lumina/internal/brivo"
 	"lumina/internal/store"
@@ -60,6 +62,31 @@ func (s *Server) downloadPreviewAsync(img store.Image, authKey string) {
 			return
 		}
 		_ = s.repo.ImageDone(img.ID, rel, p.TS)
+		s.captionAsync(img.ID, p.Bytes) // Gemini vision description
+	}()
+}
+
+// captionAsync asks Gemini to describe a preview frame and stores the result on
+// the image row. No-op if the agent isn't configured. Bounded by capSem and
+// graceful on error (the UI just shows no caption).
+func (s *Server) captionAsync(imageID string, jpeg []byte) {
+	if s.agent == nil || !s.agent.Enabled() || len(jpeg) == 0 {
+		return
+	}
+	go func() {
+		s.capSem <- struct{}{}
+		defer func() { <-s.capSem }()
+
+		_ = s.repo.ImageCaptioning(imageID)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		text, err := s.agent.Describe(ctx, jpeg, "image/jpeg")
+		if err != nil || text == "" {
+			_ = s.repo.ImageCaptioned(imageID, "", false)
+			return
+		}
+		_ = s.repo.ImageCaptioned(imageID, text, true)
 	}()
 }
 
@@ -111,7 +138,10 @@ func (s *Server) handleImageStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "image not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, types.ImageStatusResponse{ID: img.ID, State: img.State, Ts: img.EENTs, Error: img.Error})
+	writeJSON(w, http.StatusOK, types.ImageStatusResponse{
+		ID: img.ID, State: img.State, Ts: img.EENTs, Error: img.Error,
+		Caption: img.Caption, CaptionState: img.CaptionState,
+	})
 }
 
 // GET /api/images?sessionId=&imageId= — serve the downloaded preview JPEG.
@@ -165,7 +195,8 @@ func (s *Server) handlePreviews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// store saves one fetched preview and records it as a SUCCESS image.
+	// store saves one fetched preview, records it as a SUCCESS image, and kicks
+	// off a Gemini caption for it.
 	store1 := func(p *brivo.Preview) types.Preview {
 		id := store.NewUUID()
 		rel, err := s.saveImageBytes(sessionID, id, p.Bytes)
@@ -174,6 +205,9 @@ func (s *Server) handlePreviews(w http.ResponseWriter, r *http.Request) {
 			state = store.StateFailure
 		}
 		_ = s.repo.CreateImage(&store.Image{ID: id, SessionID: sessionID, CameraESN: req.CameraESN, EENTs: p.TS, Kind: "preview", State: state, Path: rel})
+		if state == store.StateSuccess {
+			s.captionAsync(id, p.Bytes)
+		}
 		return types.Preview{ImageID: id, Ts: p.TS, State: state}
 	}
 

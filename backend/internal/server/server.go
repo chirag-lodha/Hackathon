@@ -27,10 +27,11 @@ type Server struct {
 	hires  *hires.Processor
 	brivo  *brivo.Client
 	dlSem  chan struct{} // bounds concurrent preview downloads
+	capSem chan struct{} // bounds concurrent Gemini caption calls (rate-limit friendly)
 }
 
 func New(cfg *config.Config, st *store.Store, cam *camera.Client, eng *model.Engine, repo *store.Repo, ag *agent.Agent, hp *hires.Processor, bv *brivo.Client) *Server {
-	return &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag, hires: hp, brivo: bv, dlSem: make(chan struct{}, 12)}
+	return &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag, hires: hp, brivo: bv, dlSem: make(chan struct{}, 12), capSem: make(chan struct{}, 4)}
 }
 
 // Handler builds the full http.Handler (routes + middleware).

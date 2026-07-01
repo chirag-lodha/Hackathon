@@ -1,0 +1,2 @@
+ALTER TABLE images DROP COLUMN IF EXISTS caption_state;
+ALTER TABLE images DROP COLUMN IF EXISTS caption;

@@ -164,6 +164,22 @@ func (r *Repo) ImageFailed(id, msg string) error {
 		Updates(map[string]any{"state": StateFailure, "error": msg}).Error
 }
 
+// ImageCaptioning marks that a caption is being generated for an image.
+func (r *Repo) ImageCaptioning(id string) error {
+	return r.db.Model(&Image{}).Where("id = ?", id).
+		Update("caption_state", StateProcessing).Error
+}
+
+// ImageCaptioned stores the generated caption (or marks FAILURE with an empty one).
+func (r *Repo) ImageCaptioned(id, caption string, ok bool) error {
+	state := StateSuccess
+	if !ok {
+		state = StateFailure
+	}
+	return r.db.Model(&Image{}).Where("id = ?", id).
+		Updates(map[string]any{"caption": caption, "caption_state": state}).Error
+}
+
 // ---------- ROI <-> coords helpers ----------
 
 // CoordsFromROI converts the UI's {x,y,w,h} ROI into the stored two-point
