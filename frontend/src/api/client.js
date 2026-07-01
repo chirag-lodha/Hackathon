@@ -69,3 +69,26 @@ export function deleteAllTrials() {
 export function chatAgent(payload) {
   return post('/chat', payload)
 }
+
+// ---------- auth ----------
+
+/** Signup-or-login: creates the user if new, else verifies the password. */
+export function authSubmit(username, password) {
+  return post('/auth', { username, password })
+}
+
+/** Current logged-in user, or null if not authenticated. */
+export async function fetchMe() {
+  const res = await fetch('/api/me')
+  if (!res.ok) return null
+  return res.json()
+}
+
+export function logout() {
+  return fetch('/api/logout', { method: 'POST' })
+}
+
+/** Persist a named session (camera auth key) against the logged-in user (24h). */
+export function createSession(name, authKey) {
+  return post('/sessions', { name, authKey })
+}

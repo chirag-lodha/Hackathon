@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import { fetchMe } from '../api/client.js'
 
 const SessionContext = createContext(null)
 
@@ -16,6 +17,13 @@ function loadHistory() {
 }
 
 export function SessionProvider({ children }) {
+  // Auth: logged-in user (null = logged out). authChecked flips once /api/me resolves.
+  const [user, setUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
+  useEffect(() => {
+    fetchMe().then((u) => setUser(u)).finally(() => setAuthChecked(true))
+  }, [])
+
   // The active session config submitted from the New form.
   const [session, setSession] = useState(null)
   const [history, setHistory] = useState(loadHistory)
@@ -93,12 +101,13 @@ export function SessionProvider({ children }) {
   }, [])
   const shiftCommand = useCallback(() => setCommandQueue((q) => q.slice(1)), [])
 
-  // Workspace publishes its live status here so Goku knows the current state.
+  // Workspace publishes its live status here so the assistant knows the state.
   const [workspaceStatus, setWorkspaceStatus] = useState({})
 
   return (
     <SessionContext.Provider
       value={{
+        user, setUser, authChecked,
         session, setSession, history, addHistory, removeHistory, clearHistory,
         adminMode, toggleAdmin, commandQueue, dispatchCommand, shiftCommand,
         workspaceStatus, setWorkspaceStatus,

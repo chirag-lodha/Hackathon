@@ -44,9 +44,9 @@ func main() {
 	eng := model.NewEngine(cfg, st)
 	ag := agent.New(cfg.GeminiAPIKey, cfg.GeminiModel)
 	if ag.Enabled() {
-		log.Printf("Goku agent enabled (model: %s)", cfg.GeminiModel)
+		log.Printf("Brivo agent enabled (model: %s)", cfg.GeminiModel)
 	} else {
-		log.Printf("Goku agent disabled (set GEMINI_API_KEY to enable)")
+		log.Printf("Brivo agent disabled (set GEMINI_API_KEY to enable)")
 	}
 	srv := server.New(cfg, st, cam, eng, repo, ag)
 

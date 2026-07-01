@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Plus, History as HistoryIcon, ArrowRight, Sparkles } from 'lucide-react'
+import { Plus, History as HistoryIcon, ArrowRight, Sparkles, LogOut } from 'lucide-react'
+import { useSession } from '../context/SessionContext.jsx'
+import { logout as apiLogout } from '../api/client.js'
 
 const fade = {
   initial: { opacity: 0, y: 12 },
@@ -10,8 +12,21 @@ const fade = {
 
 export default function Landing() {
   const nav = useNavigate()
+  const { user, setUser } = useSession()
+
+  const doLogout = async () => {
+    try { await apiLogout() } catch {}
+    setUser(null)
+  }
+
   return (
     <motion.div className="landing" variants={fade} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.4 }}>
+      {user && (
+        <div className="landing-topbar">
+          <span className="landing-user">{user.username}</span>
+          <button className="btn btn-ghost landing-logout" onClick={doLogout}><LogOut size={15} /> Logout</button>
+        </div>
+      )}
       <div className="landing-inner">
         <motion.img
           className="hero-brivo"
@@ -55,7 +70,11 @@ export default function Landing() {
       </div>
 
       <style>{`
-        .landing { flex: 1; display: grid; place-items: center; padding: 32px; }
+        .landing { position: relative; flex: 1; display: grid; place-items: center; padding: 32px; }
+        .landing-topbar { position: absolute; top: 20px; right: 24px; display: flex; align-items: center; gap: 12px; }
+        .landing-user { font-size: 13px; color: var(--text-1); font-weight: 600; }
+        .landing-logout { padding: 8px 14px; font-size: 13px; }
+        .landing-logout:hover { color: var(--danger); }
         .landing-inner { width: 100%; max-width: 760px; display: flex; flex-direction: column; align-items: center; text-align: center; }
         .hero-brivo { height: 58px; width: auto; margin-bottom: 28px; filter: drop-shadow(0 8px 28px rgba(115,157,210,.35)); }
 

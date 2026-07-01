@@ -41,6 +41,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/trials/{id}", s.handleDeleteTrial)
 	mux.HandleFunc("DELETE /api/trials", s.handleDeleteAllTrials)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("POST /api/auth", s.handleAuth)
+	mux.HandleFunc("GET /api/me", s.handleMe)
+	mux.HandleFunc("POST /api/logout", s.handleLogout)
+	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 
 	// Static: generated/processed images.

@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { ArrowLeft, Cctv, Tag, Clock, KeyRound, ArrowRight, Loader2 } from 'lucide-react'
 import Logo from '../components/Logo.jsx'
 import { useSession } from '../context/SessionContext.jsx'
-import { fetchFrames } from '../api/client.js'
+import { fetchFrames, createSession } from '../api/client.js'
 
 const fade = {
   initial: { opacity: 0, y: 12 },
@@ -29,6 +29,7 @@ export default function NewSession() {
     const e = {}
     if (!form.sessionName.trim()) e.sessionName = 'Session name is required'
     if (!form.cameraEsn.trim()) e.cameraEsn = 'Camera ESN is required'
+    if (!form.authKey.trim()) e.authKey = 'Auth key is required'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -38,6 +39,9 @@ export default function NewSession() {
     if (!validate()) return
     setLoading(true)
     try {
+      // Persist the session (name + auth key) against the logged-in user (24h).
+      await createSession(form.sessionName.trim(), form.authKey.trim())
+
       const anchorTime = form.dateTime ? new Date(form.dateTime).toISOString() : null
       const result = await fetchFrames({
         sessionName: form.sessionName.trim(),
@@ -98,7 +102,7 @@ export default function NewSession() {
             <Field icon={<Clock size={16} />} label="Date & time" hint="optional · defaults to now">
               <input type="datetime-local" value={form.dateTime} onChange={set('dateTime')} />
             </Field>
-            <Field icon={<KeyRound size={16} />} label="Auth key" hint="optional">
+            <Field icon={<KeyRound size={16} />} label="Auth key" required error={errors.authKey}>
               <input value={form.authKey} onChange={set('authKey')} placeholder="••••••••" type="password" className="mono-input" />
             </Field>
           </div>

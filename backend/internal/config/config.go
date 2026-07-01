@@ -68,6 +68,9 @@ type Config struct {
 	// GeminiModel: e.g. gemini-2.0-flash / gemini-2.5-flash / gemini-1.5-flash.
 	GeminiAPIKey string
 	GeminiModel  string
+
+	// AuthSecret signs the login cookie. Set LUMINA_AUTH_SECRET in production.
+	AuthSecret string
 }
 
 func getenv(key, def string) string {
@@ -103,6 +106,7 @@ func Load() *Config {
 		CameraAuthKey: getenv("LUMINA_CAMERA_AUTHKEY", ""),
 		GeminiAPIKey:  getenv("GEMINI_API_KEY", ""),
 		GeminiModel:   getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+		AuthSecret:    getenv("LUMINA_AUTH_SECRET", "lumina-dev-secret-change-me"),
 	}
 	return c
 }

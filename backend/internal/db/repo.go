@@ -75,6 +75,44 @@ func (r *Repo) HardDeleteAll() error {
 	return r.db.Unscoped().Where("1 = 1").Delete(&Trial{}).Error
 }
 
+// ---------- users & sessions ----------
+
+// FindUser returns the user with the given username, or (nil, nil) if none.
+func (r *Repo) FindUser(username string) (*User, error) {
+	var u User
+	err := r.db.Where("username = ?", username).First(&u).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &u, nil
+}
+
+// CreateUser inserts a new user with an already-hashed password.
+func (r *Repo) CreateUser(username, passwordHash string) (*User, error) {
+	u := &User{Username: username, PasswordHash: passwordHash}
+	if err := r.db.Create(u).Error; err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// GetUser loads a user by id.
+func (r *Repo) GetUser(id uint) (*User, error) {
+	var u User
+	if err := r.db.First(&u, id).Error; err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// CreateSession stores a named session (auth key) for a user.
+func (r *Repo) CreateSession(s *Session) error {
+	return r.db.Create(s).Error
+}
+
 // ---------- ROI <-> coords helpers ----------
 
 // CoordsFromROI converts the UI's {x,y,w,h} ROI into the stored two-point

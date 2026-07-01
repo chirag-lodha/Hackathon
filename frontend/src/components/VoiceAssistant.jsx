@@ -6,7 +6,7 @@ import { useSession } from '../context/SessionContext.jsx'
 import { fetchFrames, chatAgent } from '../api/client.js'
 
 /**
- * "Goku" — a Gemini-powered voice agent. It listens (browser STT), sends the
+ * "Brivo" — a Gemini-powered voice agent. It listens (browser STT), sends the
  * conversation + current app context to the backend /api/chat (Gemini), then
  * speaks the reply (browser TTS) and executes the returned UI actions:
  * navigation/session here, in-workspace actions via the command bus.
@@ -31,6 +31,10 @@ export default function VoiceAssistant() {
   const [typed, setTyped] = useState('')
   const [conversing, setConversing] = useState(false)
   const conversingRef = useRef(false)
+  const [voices, setVoices] = useState([])
+  const [voiceURI, setVoiceURI] = useState('')
+  const voiceURIRef = useRef('')
+  voiceURIRef.current = voiceURI
 
   const recRef = useRef(null)
   const messagesRef = useRef([])
@@ -52,8 +56,10 @@ export default function VoiceAssistant() {
           synth.cancel()
           const u = new SpeechSynthesisUtterance(text)
           u.lang = 'en-US'
-          u.rate = 1.03
-          const v = synth.getVoices().find((x) => /^en([-_]|$)/i.test(x.lang))
+          u.rate = 1.06   // a touch quicker + livelier
+          u.pitch = 0.9   // a bit deeper for a more heroic/male tone
+          const all = synth.getVoices()
+          const v = all.find((x) => x.voiceURI === voiceURIRef.current) || all.find((x) => /^en([-_]|$)/i.test(x.lang))
           if (v) u.voice = v
           u.onstart = () => setSpeaking(true)
           u.onend = () => { setSpeaking(false); resolve() }
@@ -200,7 +206,9 @@ export default function VoiceAssistant() {
     setConversing(true)
     if (!welcomeSpoken) {
       welcomeSpoken = true
-      await speak("Hi, I'm Goku. How can I help you?")
+      const greet = "Hey! I'm Brivo. Which camera should we enhance today?"
+      pushMsg('model', greet)
+      await speak(greet)
     }
     conversationLoop()
   }, [conversationLoop, stopConversation, speak])
@@ -213,41 +221,54 @@ export default function VoiceAssistant() {
     await sendToAgent(t)
   }
 
-  // voices count (diagnostic)
-  const [voiceCount, setVoiceCount] = useState(0)
+  // Load voices; default to a male English voice (closest to a "Goku" tone).
   useEffect(() => {
     if (!speechOK) return
-    const update = () => setVoiceCount(window.speechSynthesis.getVoices().length)
+    const MALE = /(\bmale\b|david|george|james|daniel|fred|guy|arthur|rishi|mark|paul|alex|man\b)/i
+    const update = () => {
+      const list = window.speechSynthesis.getVoices()
+      setVoices(list)
+      setVoiceURI((cur) => {
+        if (cur && list.some((v) => v.voiceURI === cur)) return cur
+        const en = list.filter((v) => /^en/i.test(v.lang))
+        const pick = en.find((v) => MALE.test(v.name)) || en[0] || list[0]
+        return pick ? pick.voiceURI : ''
+      })
+    }
     update()
     try { window.speechSynthesis.addEventListener('voiceschanged', update) } catch {}
     return () => { try { window.speechSynthesis.removeEventListener('voiceschanged', update) } catch {} }
   }, [])
 
-  // welcome on app start: show text immediately + best-effort autoplay voice
-  // (works only if the browser allows gesture-free audio). Otherwise Goku greets
-  // by voice the moment you tap the mic to start talking.
+  // Tap the FAB → open + greet + start listening hands-free.
+  const wakeBrivo = useCallback(() => {
+    setOpen(true)
+    if (!conversingRef.current) toggleConversation() // greets (first time) + listens
+  }, [toggleConversation])
+
+  // Welcome on app start: open + show text; speak on first interaction (browsers
+  // gate audio behind a gesture) or via best-effort autoplay if allowed.
   useEffect(() => {
-    const welcome = "Welcome to Brivo Lumina! I'm Goku, your super-resolution assistant. Tap the mic and just talk to me."
-    if (!greetedThisLoad) {
-      greetedThisLoad = true
-      setOpen(true)
-      pushMsg('model', welcome)
-    }
+    const welcome = "Hi! I'm Brivo, your super-resolution assistant. Tap the mic and just talk to me — tell me a camera and let's enhance some footage!"
+    if (!greetedThisLoad) { greetedThisLoad = true; setOpen(true); pushMsg('model', welcome) }
     if (welcomeSpoken) return
+    const evs = ['pointerdown', 'keydown', 'touchstart']
+    const fire = () => { if (welcomeSpoken) return; welcomeSpoken = true; evs.forEach((e) => window.removeEventListener(e, fire)); speak(welcome) }
+    evs.forEach((e) => window.addEventListener(e, fire))
     const timer = setTimeout(() => {
       if (welcomeSpoken) return
       const synth = window.speechSynthesis
       if (!synth || synth.getVoices().length === 0) return
       try {
         const u = new SpeechSynthesisUtterance(welcome)
-        u.lang = 'en-US'
-        u.onstart = () => { welcomeSpoken = true; setSpeaking(true) }
+        u.lang = 'en-US'; u.pitch = 0.9; u.rate = 1.06
+        u.onstart = () => { welcomeSpoken = true; setSpeaking(true); evs.forEach((e) => window.removeEventListener(e, fire)) }
         u.onend = () => setSpeaking(false)
         synth.cancel(); synth.resume(); synth.speak(u)
       } catch {}
     }, 600)
-    return () => clearTimeout(timer)
-  }, [])
+    return () => { clearTimeout(timer); evs.forEach((e) => window.removeEventListener(e, fire)) }
+  }, [speak])
 
   const close = () => {
     stopConversation()
@@ -258,7 +279,7 @@ export default function VoiceAssistant() {
 
   return (
     <>
-      <button className="va-fab" onClick={() => setOpen(true)} title="Talk to Goku">
+      <button className="va-fab" onClick={wakeBrivo} title="Talk to Brivo">
         <Mic size={22} />
         <span className="va-fab-ring" />
       </button>
@@ -276,7 +297,7 @@ export default function VoiceAssistant() {
               <div className="va-head-l">
                 <div className="va-ava"><Bot size={18} /></div>
                 <div>
-                  <strong>Goku</strong>
+                  <strong>Brivo</strong>
                   <span className="va-status">
                     {speaking ? <><Volume2 size={12} /> speaking…</> : listening ? <><Mic size={12} /> listening…</> : thinking ? <><Loader2 size={12} className="va-spin" /> thinking…</> : conversing ? <><Mic size={12} /> live · tap mic to stop</> : 'AI super-res assistant'}
                   </span>
@@ -301,7 +322,19 @@ export default function VoiceAssistant() {
               <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={SR ? (conversing ? 'Listening… just speak' : 'Tap mic to talk, or type…') : 'Type a message…'} disabled={thinking || speaking} />
               <button type="submit" className="va-send" disabled={thinking || speaking || !typed.trim()}><Send size={16} /></button>
             </form>
-            <div className="va-foot">🔊 voices: {voiceCount}{voiceCount ? '' : ' (none)'} · {conversing ? 'Live — Goku is listening, just talk' : 'Tap the mic once for a hands-free chat'}</div>
+            <div className="va-foot">
+              <label className="va-voice">
+                🔊
+                <select value={voiceURI} onChange={(e) => setVoiceURI(e.target.value)} disabled={!voices.length}>
+                  {!voices.length && <option>no voices</option>}
+                  {voices.map((v) => (
+                    <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>
+                  ))}
+                </select>
+                <button type="button" className="va-voice-test" onClick={() => speak("Hi, I'm Brivo! Let's enhance those cameras!")}>Try</button>
+              </label>
+              <span className="va-hint">{conversing ? 'Live — just talk' : 'Tap the mic for a hands-free chat'}</span>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -313,14 +346,23 @@ export default function VoiceAssistant() {
 
         .va-panel { position: fixed; right: 26px; bottom: 26px; z-index: 41; width: 390px; max-width: calc(100vw - 32px); height: 70vh; max-height: 620px; display: flex; flex-direction: column; border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden; }
         .va-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border); }
-        .va-head-l { display: flex; align-items: center; gap: 11px; }
-        .va-ava { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: var(--accent-grad); color: #fff; }
+        .va-head-l { display: flex; align-items: center; gap: 10px; }
+        .va-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-2); }
+        .va-dot.live { background: var(--success); box-shadow: 0 0 0 4px rgba(61,220,151,.2); animation: vapulse 1.2s ease-in-out infinite; }
         .va-head-l strong { display: block; font-size: 14px; }
         .va-status { font-size: 11px; color: var(--text-2); display: inline-flex; align-items: center; gap: 5px; }
         .va-x { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--text-1); }
         .va-x:hover { background: var(--surface-2); }
 
-        .va-thread { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 9px; }
+        .goku-stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 16px 8px;
+          background: radial-gradient(120% 90% at 50% 0%, rgba(255,180,60,.10), transparent 60%); transition: background .4s ease; }
+        .goku-stage.ss { background: radial-gradient(120% 100% at 50% 0%, rgba(255,215,90,.28), transparent 65%); }
+        .goku-bubble { max-width: 92%; padding: 11px 15px; border-radius: 16px; border-top-left-radius: 5px; font-size: 14px; line-height: 1.5;
+          background: var(--surface-2); border: 1px solid var(--border); color: var(--text-0); text-align: center;
+          animation: goku-pop .3s ease; }
+        @keyframes goku-pop { from { opacity: 0; transform: translateY(6px) scale(.97); } to { opacity: 1; transform: none; } }
+
+        .va-thread { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; opacity: .85; }
         .va-msg { max-width: 84%; padding: 9px 13px; border-radius: 14px; font-size: 13px; line-height: 1.45; }
         .va-msg.model { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border); border-bottom-left-radius: 5px; }
         .va-msg.user { align-self: flex-end; background: var(--accent-grad); color: #fff; border-bottom-right-radius: 5px; }
@@ -336,7 +378,12 @@ export default function VoiceAssistant() {
         .va-input input:focus { border-color: var(--accent); }
         .va-send { width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px; display: grid; place-items: center; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-0); }
         .va-send:disabled { opacity: .4; }
-        .va-foot { padding: 8px 14px 12px; font-size: 10px; color: var(--text-2); line-height: 1.4; }
+        .va-foot { padding: 8px 12px 12px; font-size: 10px; color: var(--text-2); display: flex; flex-direction: column; gap: 5px; }
+        .va-voice { display: flex; align-items: center; gap: 6px; }
+        .va-voice select { flex: 1; min-width: 0; font-size: 11px; padding: 5px 7px; border-radius: 7px; background: rgba(0,0,0,.25); color: var(--text-0); border: 1px solid var(--border); color-scheme: dark; }
+        .va-voice-test { flex-shrink: 0; font-size: 11px; font-weight: 600; padding: 5px 10px; border-radius: 7px; background: var(--accent-soft); color: #c3b4ff; border: 1px solid rgba(124,92,255,.3); }
+        .va-voice-test:hover { background: rgba(124,92,255,.22); }
+        .va-hint { color: var(--text-2); }
         .va-spin { animation: spin .7s linear infinite; }
       `}</style>
     </>

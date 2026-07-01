@@ -201,7 +201,11 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 | POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?}` | `{id, state, imageUrl, sourceUrl, width, height, scale, ms}` |
 | POST | `/api/alternate` | `{imagePath, cameraEsn, sessionName?, ..., roi?}` | `{id, state, imageUrl, sources[], ms}` — holistic |
 | POST | `/api/history` | `{}` | `{records[]}` — successful trials, newest first |
-| POST | `/api/chat` | `{messages[], context}` | `{reply, actions[]}` — Goku (Gemini) agent |
+| POST | `/api/chat` | `{messages[], context}` | `{reply, actions[]}` — Brivo (Gemini) agent |
+| POST | `/api/auth` | `{username, password}` | signup if new else login; sets auth cookie |
+| GET | `/api/me` | — | current user (from cookie) or 401 |
+| POST | `/api/logout` | — | clears the auth cookie |
+| POST | `/api/sessions` | `{name, authKey}` | store a session for the user (24h) |
 | DELETE | `/api/trials/{id}` | — | delete one trial + its output file (hidden admin) |
 | DELETE | `/api/trials` | — | wipe all trials + output files (hidden admin) |
 | GET | `/api/health` | — | `{status:"ok"}` |
@@ -226,7 +230,8 @@ conversation, or type in the panel.
 # 2. create your local env file from the template
 cp backend/.env.example backend/.env
 # 3. edit backend/.env → set GEMINI_API_KEY=<your key>
-#    (free tier: keep GEMINI_MODEL=gemini-2.5-flash)
+#    (free tier: GEMINI_MODEL=gemini-2.5-flash-lite has the biggest free quota;
+#     if you ever see "quota exceeded", switch to gemini-flash-latest)
 # 4. start the backend — it auto-loads backend/.env
 cd backend && LUMINA_ADDR=:8090 go run .   # logs "Goku agent enabled"
 ```
@@ -277,8 +282,9 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
 | `LUMINA_CAMERA_API` | _(empty)_ | upstream camera/VMS base URL (later) |
 | `LUMINA_CAMERA_AUTHKEY` | _(empty)_ | default camera auth key (later) |
 | `DATABASE_URL` | `postgres://lumina:lumina@localhost:5433/lumina?sslmode=disable` | Postgres connection |
+| `LUMINA_AUTH_SECRET` | `lumina-dev-secret-change-me` | signs the login cookie (set in prod) |
 | `GEMINI_API_KEY` | _(empty)_ | Goku AI assistant — free key from Google AI Studio |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model (use `gemini-2.5-flash` for free tier) |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model — use `gemini-2.5-flash-lite` (biggest free quota) |
 
 ---
 

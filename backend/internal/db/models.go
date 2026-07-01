@@ -75,3 +75,24 @@ type Trial struct {
 
 // TableName pins the table name (matches the migration).
 func (Trial) TableName() string { return "trials" }
+
+// User is an account (username + bcrypt password hash).
+type User struct {
+	gorm.Model
+	Username     string `gorm:"column:username;uniqueIndex"`
+	PasswordHash string `gorm:"column:password_hash"`
+}
+
+func (User) TableName() string { return "users" }
+
+// Session is a named capture session owned by a user, holding the camera auth
+// key (valid 24h — ExpiresAt).
+type Session struct {
+	gorm.Model
+	UserID    uint      `gorm:"column:user_id"`
+	Name      string    `gorm:"column:name"`
+	AuthKey   string    `gorm:"column:auth_key"`
+	ExpiresAt time.Time `gorm:"column:expires_at"`
+}
+
+func (Session) TableName() string { return "sessions" }

@@ -124,3 +124,27 @@ type HistoryRecord struct {
 type HistoryResponse struct {
 	Records []HistoryRecord `json:"records"`
 }
+
+// ---------- auth & sessions ----------
+
+type AuthRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type AuthResponse struct {
+	UserID   string `json:"userId"`
+	Username string `json:"username"`
+	IsNew    bool   `json:"isNew"`
+}
+
+type CreateSessionRequest struct {
+	Name    string `json:"name"`
+	AuthKey string `json:"authKey"`
+}
+
+type CreateSessionResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	ExpiresAt string `json:"expiresAt"`
+}
