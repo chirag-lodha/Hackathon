@@ -208,6 +208,63 @@ func (s *Server) handleCameras(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, types.CamerasResponse{Cameras: out, Images: imgs})
 }
 
+// POST /api/location-cameras {sessionId, cameraEsn, aroundTs} — return every
+// camera sharing the selected camera's physical location (EEN "location" field)
+// and kick off a preview download for each at the given moment. Powers the
+// Command View wall: "show me all cameras covering this location right now".
+func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.verifyCookie(r); !ok {
+		writeErr(w, http.StatusUnauthorized, "please log in")
+		return
+	}
+	var req types.LocationCamerasRequest
+	if err := decode(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	authKey := s.resolveAuthKey(req.AuthKey, req.SessionID)
+	if !brivo.IsKey(authKey) || req.CameraESN == "" {
+		writeErr(w, http.StatusBadRequest, "auth key and cameraEsn are required")
+		return
+	}
+	sessionID := parseUint(req.SessionID)
+
+	cams, err := s.brivo.Cameras(authKey)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// Find the selected camera's location, then keep only cameras at that same
+	// location. If the location is unknown/blank, fall back to just the camera
+	// itself so the wall still renders something meaningful.
+	var location string
+	for _, c := range cams {
+		if c.ESN == req.CameraESN {
+			location = c.Location
+			break
+		}
+	}
+
+	out := make([]types.Camera, 0)
+	for _, cam := range cams {
+		sameLocation := location != "" && cam.Location == location
+		isSelf := cam.ESN == req.CameraESN
+		if !sameLocation && !isSelf {
+			continue
+		}
+		id := store.NewUUID()
+		img := store.Image{ID: id, SessionID: sessionID, CameraESN: cam.ESN, EENTs: req.AroundTs, Kind: "preview", State: store.StateProcessing}
+		if err := s.repo.CreateImage(&img); err != nil {
+			continue
+		}
+		s.downloadPreviewAsync(img, authKey)
+		out = append(out, types.Camera{ESN: cam.ESN, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: id})
+	}
+
+	writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out})
+}
+
 // GET /api/image/status?sessionId=&imageId= — poll a preview download's state.
 func (s *Server) handleImageStatus(w http.ResponseWriter, r *http.Request) {
 	img, err := s.repo.GetImage(r.URL.Query().Get("imageId"))
@@ -292,7 +349,14 @@ func (s *Server) handlePreviews(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Direction {
 	case "older":
-		cur := req.AroundTs
+		// Resolve the anchor first to step PAST it, so paging returns genuinely
+		// older frames (not the cursor frame the client already has).
+		anchor, err := s.brivo.FetchPreview(authKey, arch, req.CameraESN, req.AroundTs, brivo.PrevMode)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		cur := anchor.PrevTS
 		for i := 0; i < n && cur != ""; i++ {
 			p, err := s.brivo.FetchPreview(authKey, arch, req.CameraESN, cur, brivo.PrevMode)
 			if err != nil {
@@ -302,7 +366,12 @@ func (s *Server) handlePreviews(w http.ResponseWriter, r *http.Request) {
 			cur = p.PrevTS
 		}
 	case "newer":
-		cur := req.AroundTs
+		anchor, err := s.brivo.FetchPreview(authKey, arch, req.CameraESN, req.AroundTs, brivo.NextMode)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		cur := anchor.NextTS
 		for i := 0; i < n && cur != ""; i++ {
 			p, err := s.brivo.FetchPreview(authKey, arch, req.CameraESN, cur, brivo.NextMode)
 			if err != nil {

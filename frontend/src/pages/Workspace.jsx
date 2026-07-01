@@ -25,7 +25,7 @@ const STATE_MSG = {
   FAILURE: 'Failed',
 }
 
-const PREVIEW_NEIGHBORS = 3 // frames per side fetched on open / scroll
+const PREVIEW_NEIGHBORS = 6 // frames per side fetched on open / scroll
 
 // Human label from an EEN timestamp (YYYYMMDDhhmmss.fff, UTC).
 function eenLabel(ts) {
@@ -65,6 +65,9 @@ export default function Workspace() {
   const [commandView, setCommandView] = useState(false)
 
   const seenIds = useRef(new Set())
+  // Once a direction returns no new frames, stop asking (prevents the auto-fill
+  // loop from hammering a dry edge, e.g. "newer" when already at the latest).
+  const exhausted = useRef({ left: false, right: false })
 
   // Gemini vision caption for the frame currently on the stage.
   const { caption: frameCaption, state: captionState } = useImageCaption(selected?.id, !!selected)
@@ -81,6 +84,9 @@ export default function Workspace() {
     if (!session || !camera) return
     let alive = true
     setInitialLoading(true)
+    // Fresh camera → reset the de-dupe set and edge-exhaustion flags.
+    seenIds.current = new Set()
+    exhausted.current = { left: false, right: false }
     fetchPreviews({ sessionId: session.id, cameraEsn: camera.esn, aroundTs: camera.anchorTs || '', direction: 'around', count: PREVIEW_NEIGHBORS })
       .then((res) => {
         if (!alive) return
@@ -99,6 +105,7 @@ export default function Workspace() {
   const loadMore = useCallback(
     async (direction) => {
       if (!cursors) return
+      if (exhausted.current[direction]) return
       if (direction === 'left' && loadingLeft) return
       if (direction === 'right' && loadingRight) return
       direction === 'left' ? setLoadingLeft(true) : setLoadingRight(true)
@@ -118,6 +125,9 @@ export default function Workspace() {
             left: direction === 'left' ? res.oldestTs : c.left,
             right: direction === 'right' ? res.newestTs : c.right,
           }))
+        } else {
+          // Dry edge — no more frames this way; stop the auto-fill from retrying.
+          exhausted.current[direction] = true
         }
       } finally {
         direction === 'left' ? setLoadingLeft(false) : setLoadingRight(false)
@@ -140,16 +150,9 @@ export default function Workspace() {
     runOp(op, engine)
   }
 
-  // Command View: toggle the multi-camera wall. Runs holistic first if we don't
-  // already have a holistic result to source the cameras from.
-  const runCommandView = () => {
-    if (commandView) {
-      setCommandView(false)
-      return
-    }
-    setCommandView(true)
-    if (!(mode === 'holistic' && result)) runOp('holistic')
-  }
+  // Command View: toggle the multi-camera wall. It fetches the real co-located
+  // cameras itself (by EEN location), so no holistic run is needed.
+  const runCommandView = () => setCommandView((v) => !v)
 
   const runOp = useCallback(
     async (op, engine) => {
@@ -272,19 +275,16 @@ export default function Workspace() {
 
       <div className="ws-body">
         <section className="ws-stage">
-          {commandView ? (
-            resultLoading || !(result && result.type === 'holistic') ? (
-              <div className="ws-stage-empty">
-                <Loader2 size={30} className="spin-ico" />
-                <h3>Building Command View…</h3>
-                <p>Gathering every camera covering this location for this moment.</p>
-              </div>
-            ) : (
-              <>
-                <CommandView result={result} moment={selected?.label} />
-                <button className="ss-exit" onClick={() => setCommandView(false)}><XCircle size={15} /> Exit</button>
-              </>
-            )
+          {commandView && selected ? (
+            <>
+              <CommandView
+                sessionId={session.id}
+                cameraEsn={camera.esn}
+                aroundTs={selected.timestamp}
+                moment={selected.label}
+              />
+              <button className="ss-exit" onClick={() => setCommandView(false)}><XCircle size={15} /> Exit</button>
+            </>
           ) : selected ? (
             <RoiCanvas src={selected.thumb} roi={roi} onChange={setRoi} />
           ) : initialLoading ? (
@@ -360,16 +360,14 @@ export default function Workspace() {
                     <div className="ws-action-ico alt"><Layers size={20} /></div>
                     <div className="ws-action-txt"><strong>Holistic View</strong><span>Fuse all cameras on this location</span></div>
                   </button>
-                  {mode === 'holistic' && result && (
-                    <button className={`ws-action cv-action ${commandView ? 'active' : ''}`} onClick={runCommandView} disabled={resultLoading}>
-                      <div className="ws-action-ico cv"><LayoutGrid size={20} /></div>
-                      <div className="ws-action-txt">
-                        <strong>Command View {commandView ? '· ON' : ''}</strong>
-                        <span>See every camera on this location as a live wall</span>
-                      </div>
-                      <Cctv size={16} className="cv-corner" />
-                    </button>
-                  )}
+                  <button className={`ws-action cv-action ${commandView ? 'active' : ''}`} onClick={runCommandView}>
+                    <div className="ws-action-ico cv"><LayoutGrid size={20} /></div>
+                    <div className="ws-action-txt">
+                      <strong>Command View {commandView ? '· ON' : ''}</strong>
+                      <span>Every camera at this location, live, as a wall</span>
+                    </div>
+                    <Cctv size={16} className="cv-corner" />
+                  </button>
                 </div>
 
                 <div className="ws-result">

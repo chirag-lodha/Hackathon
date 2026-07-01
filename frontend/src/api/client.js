@@ -133,6 +133,12 @@ export function fetchPreviews(params) {
   return post('/previews', { ...params, sessionId: String(params.sessionId) })
 }
 
+/** Cameras sharing the given camera's physical location (Command View wall).
+ *  params: { sessionId, cameraEsn, aroundTs? } → { location, cameras:[{esn,name,location,status,imageId}] } */
+export function fetchLocationCameras(params) {
+  return post('/location-cameras', { ...params, sessionId: String(params.sessionId) })
+}
+
 /** Poll a preview/image download's state → { id, state, ts, error }. */
 export async function imageStatus(imageId) {
   const res = await fetch(`/api/image/status?imageId=${encodeURIComponent(imageId)}`)

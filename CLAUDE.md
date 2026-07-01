@@ -108,8 +108,13 @@ holistic runs it inline.
     too) then loads `GET /api/images?imageId=` (serves the JPEG, or `202` until ready).
     The frontend hook `useImageCaption` polls status until the caption resolves.
   - `POST /api/previews {sessionId, cameraEsn, aroundTs, direction, count}` walks
-    prev/next to fetch a window (`around` = anchor + N each side; `older`/`newer` for
-    filmstrip paging). Each fetched frame is saved as a SUCCESS `images` row.
+    prev/next to fetch a window (`around` = anchor + N each side; `older`/`newer` step
+    PAST the anchor first so paging returns genuinely-new frames). Each fetched frame
+    is saved as a SUCCESS `images` row. The filmstrip auto-fills until scrollable and
+    marks an edge exhausted when a direction returns nothing new.
+  - `POST /api/location-cameras {sessionId, cameraEsn, aroundTs}` returns every camera
+    sharing the selected camera's EEN `location` (+ a preview download each) for the
+    Command View wall.
   - **Auth key resolution:** `resolveAuthKey(reqKey, sessionID)` prefers a request
     key else falls back to the session's stored key — the frontend normally passes
     only `sessionId`, keeping the key server-side.
@@ -166,10 +171,13 @@ the **frontend executes the actions** (`create_session`, `select_camera`,
 - No key → `Agent.Enabled()` is false and Brivo returns a friendly "not configured"
   reply; the rest of the app works normally. `GEMINI_MODEL` defaults to
   `gemini-2.0-flash` (use `gemini-2.5-flash-lite` for the biggest free quota).
-- **Command View** is the `command_view` action: presents a holistic result as a
-  synchronized multi-camera wall — one enlarged focus feed plus a clickable grid of
-  every camera covering the location (`frontend/src/components/CommandView.jsx`,
-  pure DOM/CSS, no 3D deps); requires a prior holistic run (its `sources`).
+- **Command View** is the `command_view` action: a synchronized multi-camera wall
+  — one enlarged focus feed plus a clickable grid of **the real cameras that share
+  the selected camera's EEN `location`** (`frontend/src/components/CommandView.jsx`,
+  pure DOM/CSS, no 3D deps). Standalone (no holistic run needed): it calls
+  `POST /api/location-cameras {sessionId, cameraEsn, aroundTs}` → `handleLocationCameras`
+  groups `brivo.Cameras` by the `location` field and kicks off a preview download per
+  co-located camera at that moment; the UI polls `/api/image/status` per tile.
 
 ## Database conventions (important)
 

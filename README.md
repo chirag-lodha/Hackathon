@@ -192,10 +192,10 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
   gracefully with a clear message while Super-Res/Holistic keep working.*
 - **Before/after compare slider** and holistic composite + source cameras
 - **History gallery** + full-screen lightbox with keyboard navigation
-- **Command View** — a synchronized multi-camera wall: one enlarged focus feed
-  plus a clickable grid of every camera covering the location at the same moment
-  (labels, live badges, timestamp). Appears after a holistic run and renders
-  whatever cameras the API returns.
+- **Command View** — a synchronized multi-camera wall: one enlarged focus feed plus
+  a clickable grid of **the real cameras that share the selected camera's location**
+  (grouped by the EEN `location` field), each downloading a live preview for the same
+  moment (labels, live badges, timestamp). No holistic run needed.
 - **Trials persisted in Postgres** with a `CREATED → PROCESSING → SUCCESS/FAILURE`
   lifecycle; ROI stored as two-point coords `[{x,y},{x,y}]`
 - **Async super-res** via the **HiRes processor** (`internal/hires`): the endpoint
@@ -283,7 +283,8 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 | Method | Endpoint | Body | Returns |
 |--------|----------|------|---------|
 | POST | `/api/cameras` | `{sessionId, authKey?}` | `{cameras:[{esn,name,location,status,imageId}], images:{esn:imageId}}` — lists account cameras; kicks off latest-preview downloads |
-| POST | `/api/previews` | `{sessionId, cameraEsn, aroundTs?, direction?, count?, authKey?}` | `{previews:[{imageId,ts,state}], oldestTs, newestTs}` — walks prev/next; `direction` = `around`/`older`/`newer` |
+| POST | `/api/previews` | `{sessionId, cameraEsn, aroundTs?, direction?, count?, authKey?}` | `{previews:[{imageId,ts,state}], oldestTs, newestTs}` — walks prev/next; `direction` = `around`/`older`/`newer` (older/newer step past the anchor) |
+| POST | `/api/location-cameras` | `{sessionId, cameraEsn, aroundTs?, authKey?}` | `{location, cameras:[{esn,name,location,status,imageId}]}` — cameras sharing the selected camera's location (Command View wall); kicks off a preview download each |
 | GET | `/api/image/status` | `?imageId=` | `{id, state, ts, error?, caption?, captionState?}` — poll a preview download (and its Gemini caption) |
 | GET | `/api/images` | `?imageId=` | the downloaded preview JPEG (or `202` if not ready) |
 | POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?, engine?}` | **`202`** `{id, type, engine, state:"CREATED", roi}` — enqueued; poll for the result. `engine` = `dummy` (built-in) or `gemini` (Nano Banana) |

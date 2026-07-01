@@ -188,6 +188,22 @@ type CamerasResponse struct {
 	Images  map[string]string `json:"images"` // esn -> imageId
 }
 
+// LocationCamerasRequest asks for every camera that shares the selected camera's
+// physical location (EEN "location" field), for the Command View wall.
+type LocationCamerasRequest struct {
+	SessionID string `json:"sessionId"`
+	AuthKey   string `json:"authKey"`
+	CameraESN string `json:"cameraEsn"` // the camera whose location we group by
+	AroundTs  string `json:"aroundTs"`  // EEN ts to fetch each camera's preview at ("" = latest)
+}
+
+// LocationCamerasResponse lists the co-located cameras (each with a preview
+// download in flight — poll /api/image/status like the camera grid).
+type LocationCamerasResponse struct {
+	Location string   `json:"location"`
+	Cameras  []Camera `json:"cameras"`
+}
+
 // ImageStatusResponse is the poll result for a preview/image download.
 type ImageStatusResponse struct {
 	ID    string `json:"id"`

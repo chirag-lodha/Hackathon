@@ -34,6 +34,23 @@ export default function Filmstrip({ frames, selectedId, onSelect, onNeedMore, lo
     }
   }, [frames])
 
+  // Auto-fill: if the strip doesn't overflow yet (e.g. only the initial ~4 frames
+  // at the latest moment), onScroll never fires — so proactively ask for more
+  // after each render and on resize until it becomes scrollable. loadMore() guards
+  // against exhausted directions, so this converges.
+  useEffect(() => {
+    const id = requestAnimationFrame(checkEdges)
+    return () => cancelAnimationFrame(id)
+  }, [frames, checkEdges])
+
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => checkEdges())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [checkEdges])
+
   return (
     <div className="filmstrip glass">
       <div className="filmstrip-edge left">{loadingLeft && <Loader2 className="fs-spin" size={16} />}</div>

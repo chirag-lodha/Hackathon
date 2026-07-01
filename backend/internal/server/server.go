@@ -65,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("POST /api/cameras", s.handleCameras)
 	mux.HandleFunc("POST /api/previews", s.handlePreviews)
+	mux.HandleFunc("POST /api/location-cameras", s.handleLocationCameras)
 	mux.HandleFunc("GET /api/image/status", s.handleImageStatus)
 	mux.HandleFunc("GET /api/images", s.handleServeImage)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
