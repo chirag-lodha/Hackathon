@@ -64,8 +64,8 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
   │  camera/   frame source  (dummy now → real ESN/authKey API)  │
   │  model/    Upscaler iface · DummyUpscaler · holistic fusion  │
   │  imaging/  resize · crop · enhance · composite (pure stdlib)  │
-  │  store/    on-disk images  (data/captures, data/outputs)     │
-  │  db/       GORM repo  +  golang-migrate (embedded SQL)        │
+  │  store/    images + Postgres (GORM repo, migrations, models) │
+  │  hires/    async super-res worker  ·  agent/  Gemini chat    │
   └───────────────┬─────────────────────────────┬────────────────┘
                   │                             │
                   ▼                             ▼
@@ -75,16 +75,21 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
         └──────────────────┘         └────────────────────────┘
 ```
 
-**Request flow for an enhancement:**
+**Request flow for a super-res enhancement (async, return-then-poll):**
 
 1. UI `POST /api/super-resolve` with the frame path + optional ROI.
-2. Handler creates a **Trial** row (`state = CREATED`), flips it to `PROCESSING`.
-3. `model.DummyUpscaler` loads the source image → crops the ROI → bilinear-upscales
+2. Handler creates a **Trial** row (`state = CREATED`), hands it to the **HiRes
+   processor** (`internal/hires`), and returns **`202`** immediately with the trial id.
+3. In the background, the processor flips the trial to `PROCESSING`, then
+   `model.DummyUpscaler` loads the source image → crops the ROI → bilinear-upscales
    → applies a sharpen/contrast "enhance" pass → writes a high-res PNG to
    `data/outputs/`.
 4. Trial updated to `SUCCESS` with the result path/URL (or `FAILURE` + error).
-5. Response returns the image URL; the UI renders it. The image bytes are served
-   from `/files/...`.
+5. The UI polls `GET /api/trials/{id}` until `SUCCESS`/`FAILURE`, then renders the
+   image URL. The image bytes are served from `/files/...`.
+
+> Holistic (`POST /api/alternate`) still runs the pipeline **synchronously** and
+> returns the result in one response.
 
 **Two ways the stack is wired:**
 
@@ -150,6 +155,9 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
   holistic run. Renders whatever cameras/angles the API returns.
 - **Trials persisted in Postgres** with a `CREATED → PROCESSING → SUCCESS/FAILURE`
   lifecycle; ROI stored as two-point coords `[{x,y},{x,y}]`
+- **Async super-res** via the **HiRes processor** (`internal/hires`): the endpoint
+  returns `202` immediately and the job runs on a background dispatcher goroutine;
+  poll `GET /api/trials/{id}` for the result
 - **Hidden admin delete** (type `delete`) — per-item + delete-all, removes rows and
   output files
 - Real image pipeline (load → crop → upscale → enhance → save) producing real files
@@ -160,8 +168,9 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 - **Real camera integration** — fetch actual frames via ESN + auth key (stubbed)
 - **Real super-resolution model** — replace `DummyUpscaler` (implement `Upscaler`)
 - **Real holistic logic** — resolve the actual co-located cameras and fuse them
-- **Async processing** — return `CREATED` immediately and have the UI poll `state`
-  (the schema already supports it; today the op is synchronous)
+- **Async processing** — done for super-res (`202` + poll `GET /api/trials/{id}`).
+  Still pending: make holistic (`/api/alternate`) async too, and update the frontend
+  `client.js` to poll (it currently expects a synchronous super-res response)
 - **Trials not yet user-scoped** — login + user-owned sessions exist, but `trials`
   (history) aren't linked to `user_id` yet, so history is global. The `delete`
   endpoints are *hidden*, **not secured**.
@@ -195,9 +204,10 @@ from `gorm.Model`. The ROI is stored as two normalized corner points
 | `duration_ms` | bigint | model latency |
 | `error` | text | message on FAILURE |
 
-Schema is defined in `backend/internal/db/migrations/000001_init.up.sql` and applied
-by golang-migrate on startup. The GORM struct in `backend/internal/db/models.go`
-maps to it for queries only.
+Schema is defined in `backend/internal/store/migrations/*.sql` and applied
+by golang-migrate on startup. The GORM struct in `backend/internal/store/models.go`
+maps to it for queries only. (Postgres access lives in the `store` package — see
+`store/postgres.go`, `store/repo.go`.)
 
 ---
 
@@ -208,8 +218,9 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 | Method | Endpoint | Body | Returns |
 |--------|----------|------|---------|
 | POST | `/api/frames` | `{sessionName, cameraEsn, anchorTime?, authKey?, direction, cursor?}` | `{frames[], cursors}` — ±5s window |
-| POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?}` | `{id, state, imageUrl, sourceUrl, width, height, scale, ms}` |
-| POST | `/api/alternate` | `{imagePath, cameraEsn, sessionName?, ..., roi?}` | `{id, state, imageUrl, sources[], ms}` — holistic |
+| POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?}` | **`202`** `{id, type, state:"CREATED", roi}` — enqueued; poll for the result |
+| GET | `/api/trials/{id}` | — | `{id, type, state, imageUrl?, sourceUrl?, scale?, sources?, roi, ms, error?}` — poll an async trial |
+| POST | `/api/alternate` | `{imagePath, cameraEsn, sessionName?, ..., roi?}` | `{id, state, imageUrl, sources[], ms}` — holistic (synchronous) |
 | POST | `/api/history` | `{}` | `{records[]}` — successful trials, newest first |
 | POST | `/api/chat` | `{messages[], context}` | `{reply, actions[]}` — Brivo (Gemini) agent |
 | POST | `/api/auth` | `{username, password}` | signup if new else login; sets auth cookie |
@@ -315,8 +326,8 @@ hackathon/
 └── backend/                # Go API + image pipeline
     ├── main.go
     └── internal/
-        ├── config/  types/  imaging/  camera/  model/  store/  server/
-        └── db/  (models, repo, migrations/*.sql)
+        ├── config/  types/  imaging/  camera/  model/  agent/  hires/  server/
+        └── store/  (image layout + Postgres: models, repo, migrations/*.sql)
 ```
 
 ---

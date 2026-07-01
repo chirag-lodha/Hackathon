@@ -52,7 +52,9 @@ Request flow for an enhancement (read these together to understand it):
 `server/handlers.go` → `store` (create Trial via `Repo`, set state) → `model`
 (run pipeline) → `store`/`imaging` (write PNG) → Trial updated → JSON response
 with a `/files/...` URL. The `store` package is the whole persistence layer:
-Postgres (Repo/models/migrations) **and** the on-disk image store.
+Postgres (Repo/models/migrations) **and** the on-disk image store. Super-res
+runs this pipeline **asynchronously** via the HiRes processor (see below);
+holistic runs it inline.
 
 - **Frontend ↔ backend contract** lives in two places that MUST agree:
   `frontend/src/api/client.js` (+ `mock.js`) and `backend/internal/types/types.go`.
@@ -63,6 +65,15 @@ Postgres (Repo/models/migrations) **and** the on-disk image store.
 - **Image serving:** the backend writes PNGs under `data/{captures,outputs}` and
   serves them at `/files/...`. API responses return URLs, never image bytes. In dev,
   Vite proxies BOTH `/api` and `/files` to the backend.
+- **HiRes processor** (`internal/hires`): the async job runner for super-res.
+  `hires.New(engine, repo)` is constructed in `main.go` and `Init()` starts a
+  single **dispatcher goroutine** that ranges over a buffered channel of `*HiRes`
+  (each carries only a `TrialID`). Handlers call `s.hires.Submit(...)`; the
+  dispatcher injects deps and calls `execute()`, which spins up its own goroutine
+  to load the trial, run the model (branching on `trial.Type`), and persist the
+  result. The `Processor` is passed into `server.New` so handlers can reach it.
+  Note: `width`/`height` are not persisted on `trials`, so the async poll does not
+  return them (add columns + a migration if needed).
 - **Dummy boundary (the part to replace for real data):**
   - `internal/camera` synthesizes frames per `(ESN, timestamp)`, **softened** so the
     stored frame looks low-res (the same capture feeds the filmstrip, main preview,
@@ -121,9 +132,14 @@ the **frontend executes the actions** (`create_session`, `select_frame`, `set_ro
   (user_id, name, auth_key, expires_at = +24h). All use `gorm.Model` for
   `id/created_at/updated_at/deleted_at` — do not redeclare those columns. Migrations:
   `000001_init` (trials), `000002_auth` (users, sessions).
-- **State lifecycle** is updated in the handler: `CREATED` → `PROCESSING` →
-  `SUCCESS`/`FAILURE`. The op is currently **synchronous** (instant with the dummy
-  model); the schema already supports an async return-then-poll flow.
+- **State lifecycle**: `CREATED` → `PROCESSING` → `SUCCESS`/`FAILURE`.
+  - **`super_res` is async** (return-then-poll): `POST /api/super-resolve` creates
+    the trial as `CREATED`, enqueues it on the **HiRes processor** (`internal/hires`),
+    and returns **`202`** immediately. The processor drives it to `PROCESSING` then
+    `SUCCESS`/`FAILURE` in the background; the client polls **`GET /api/trials/{id}`**
+    (`TrialStatusResponse`) for the result. See the HiRes bullet under Architecture.
+  - **`holistic` is still synchronous** — `POST /api/alternate` runs the model inline
+    and returns the result in one response.
 - **ROI is stored as two-point coords `[{x,y},{x,y}]`** (normalized) in the `coords`
   jsonb column, but the API wire format is `{x,y,w,h}`. Conversion happens in
   `internal/store/repo.go` (`CoordsFromROI` / `ROIFromCoords`) — don't leak one format
