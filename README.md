@@ -192,9 +192,10 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
   gracefully with a clear message while Super-Res/Holistic keep working.*
 - **Before/after compare slider** and holistic composite + source cameras
 - **History gallery** + full-screen lightbox with keyboard navigation
-- **Super-Saiyan mode** — view a holistic result as an orbitable 3D scene (main
-  image centered, source cameras placed by their direction); appears only after a
-  holistic run. Renders whatever cameras/angles the API returns.
+- **Command View** — a synchronized multi-camera wall: one enlarged focus feed
+  plus a clickable grid of every camera covering the location at the same moment
+  (labels, live badges, timestamp). Appears after a holistic run and renders
+  whatever cameras the API returns.
 - **Trials persisted in Postgres** with a `CREATED → PROCESSING → SUCCESS/FAILURE`
   lifecycle; ROI stored as two-point coords `[{x,y},{x,y}]`
 - **Async super-res** via the **HiRes processor** (`internal/hires`): the endpoint
@@ -312,9 +313,9 @@ EEN endpoints — if omitted, the key stored on the session is used.
 ## Brivo — the AI voice assistant (Gemini)
 
 Brivo is an app-wide voice agent (Google Gemini) that understands free speech and
-drives the UI: create a session, select a frame, draw an ROI, run Super-Res /
-Holistic / Super-Saiyan 3D, open history. Tap the mic once for a hands-free
-conversation, or type in the panel.
+drives the UI: create a session, select a camera/frame, draw an ROI, run Super-Res /
+Gemini Enhance / Holistic / Command View, open history. Tap the mic once for a
+hands-free conversation, or type in the panel.
 
 **Every collaborator uses their own free Gemini key.** The key lives only in
 `backend/.env` (gitignored) — it is never committed or shared:

@@ -157,7 +157,7 @@ current app state to Gemini with `responseMimeType: application/json`, and parse
 back `{reply, actions[]}`. The backend returns that verbatim over `POST /api/chat`;
 the **frontend executes the actions** (`create_session`, `select_camera`,
 `select_frame`, `set_roi`, `super_res`, `gemini_enhance`, `holistic`,
-`super_saiyan`, `open_history`, ...).
+`command_view`, `open_history`, ...).
 
 - The list of valid action types + their params lives in the `systemPrompt` in
   `internal/agent/agent.go`. Adding a UI capability means updating BOTH that prompt
@@ -166,9 +166,10 @@ the **frontend executes the actions** (`create_session`, `select_camera`,
 - No key → `Agent.Enabled()` is false and Brivo returns a friendly "not configured"
   reply; the rest of the app works normally. `GEMINI_MODEL` defaults to
   `gemini-2.0-flash` (use `gemini-2.5-flash-lite` for the biggest free quota).
-- **Super-Saiyan** is the `super_saiyan` action: renders a holistic result as an
-  orbitable 3D scene (`frontend/src/components/Holistic3D.jsx`); requires a prior
-  holistic run.
+- **Command View** is the `command_view` action: presents a holistic result as a
+  synchronized multi-camera wall — one enlarged focus feed plus a clickable grid of
+  every camera covering the location (`frontend/src/components/CommandView.jsx`,
+  pure DOM/CSS, no 3D deps); requires a prior holistic run (its `sources`).
 
 ## Database conventions (important)
 

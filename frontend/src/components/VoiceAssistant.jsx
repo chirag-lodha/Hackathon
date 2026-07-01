@@ -150,7 +150,7 @@ export default function VoiceAssistant() {
       case 'super_res':
       case 'gemini_enhance':
       case 'holistic':
-      case 'super_saiyan':
+      case 'command_view':
         if (loc.pathname !== '/workspace') nav('/workspace')
         dispatchCommand({ type: action.type, params: p })
         break
