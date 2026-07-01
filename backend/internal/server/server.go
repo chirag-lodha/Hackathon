@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"lumina/internal/agent"
@@ -28,6 +29,11 @@ type Server struct {
 	brivo    *brivo.Client
 	dlSem    chan struct{}   // bounds concurrent preview downloads
 	capQueue chan captionJob // serialized, rate-limited Gemini caption jobs
+
+	// Command View scene groups, cached per account (auth key) so we only run the
+	// Gemini vision grouping once — cameras/scenes don't move.
+	sceneMu    sync.Mutex
+	sceneCache map[string]sceneEntry
 }
 
 // captionJob is one preview frame awaiting a Gemini vision description.
@@ -37,9 +43,15 @@ type captionJob struct {
 	attempt int
 }
 
+// sceneEntry is a cached scene grouping (groups of camera ESNs) with a TTL.
+type sceneEntry struct {
+	groups [][]string
+	exp    time.Time
+}
+
 func New(cfg *config.Config, st *store.Store, cam *camera.Client, eng *model.Engine, repo *store.Repo, ag *agent.Agent, hp *hires.Processor, bv *brivo.Client) *Server {
 	s := &Server{cfg: cfg, store: st, camera: cam, engine: eng, repo: repo, agent: ag, hires: hp, brivo: bv,
-		dlSem: make(chan struct{}, 12), capQueue: make(chan captionJob, 512)}
+		dlSem: make(chan struct{}, 12), capQueue: make(chan captionJob, 512), sceneCache: make(map[string]sceneEntry)}
 	// Single worker drains caption jobs at a steady rate so a burst of previews
 	// (e.g. 16 camera tiles at once) never blows the Gemini free-tier RPM limit.
 	go s.captionWorker()

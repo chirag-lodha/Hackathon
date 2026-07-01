@@ -249,11 +249,40 @@ func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
 
 	// Primary path: let Gemini VISION decide which cameras show the same physical
 	// place (the EEN location label can be coarse — every camera on one account may
-	// share it). We grab each camera's frame, ask Gemini to cluster them, and keep
-	// the group containing the selected camera. Falls back to the location label.
-	if out, grp := s.groupByScene(authKey, sessionID, req.CameraESN, req.AroundTs, cams); len(out) > 0 {
-		writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: firstNonEmpty(grp, location), Cameras: out})
-		return
+	// share it). The grouping is cached per account (sceneGroups), so Gemini runs
+	// only once; here we just pick the group containing the selected camera.
+	if groups, shots := s.sceneGroups(authKey, req.AroundTs, cams); groups != nil {
+		if group := groupOf(groups, req.CameraESN); group != nil {
+			out := make([]types.Camera, 0, len(group))
+			for _, esn := range group {
+				cam, ok := findCam(cams, esn)
+				if !ok {
+					continue
+				}
+				id := store.NewUUID()
+				if shots != nil && shots[esn] != nil {
+					// Fresh compute — reuse the frame we already fetched.
+					rel, serr := s.saveImageBytes(sessionID, id, shots[esn].Bytes)
+					state := store.StateSuccess
+					if serr != nil {
+						state = store.StateFailure
+					}
+					_ = s.repo.CreateImage(&store.Image{ID: id, SessionID: sessionID, CameraESN: esn, EENTs: shots[esn].TS, Kind: "preview", State: state, Path: rel})
+				} else {
+					// Cache hit — download this camera's frame in the background.
+					img := store.Image{ID: id, SessionID: sessionID, CameraESN: esn, EENTs: req.AroundTs, Kind: "preview", State: store.StateProcessing}
+					if err := s.repo.CreateImage(&img); err != nil {
+						continue
+					}
+					s.downloadPreviewAsync(img, authKey)
+				}
+				out = append(out, types.Camera{ESN: esn, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: id})
+			}
+			if len(out) > 0 {
+				writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out})
+				return
+			}
+		}
 	}
 
 	// Fallback: group by the EEN location field (async downloads).
@@ -276,26 +305,46 @@ func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out})
 }
 
-// groupByScene fetches every camera's frame, asks Gemini to cluster the ones that
-// show the same physical place, and returns the cameras in the selected camera's
-// group (previews already downloaded → SUCCESS images). Returns nil if Gemini is
-// unavailable/fails, so the caller falls back to location-label grouping. The
-// second return is a short human label for the group.
-func (s *Server) groupByScene(authKey string, sessionID uint, selectedESN, aroundTs string, cams []brivo.Camera) ([]types.Camera, string) {
-	if s.agent == nil || !s.agent.Enabled() {
-		return nil, ""
+// sceneCacheTTL is how long a computed scene grouping is reused before recomputing.
+// sceneNegTTL is a short cache for "grouping unavailable" (Gemini off/quota) so we
+// don't re-fetch every frame and re-hit Gemini on each Command View open.
+const (
+	sceneCacheTTL = 30 * time.Minute
+	sceneNegTTL   = 5 * time.Minute
+)
+
+// sceneGroups returns the scene-based camera groups for an account (auth key),
+// computed once via Gemini vision over every camera's frame and cached. On a
+// fresh compute it also returns the fetched frames (keyed by ESN) so the caller
+// can reuse them without re-downloading; on a cache hit that map is nil. Returns
+// nil groups if Gemini is unavailable/fails (caller falls back to location label).
+func (s *Server) sceneGroups(authKey, aroundTs string, cams []brivo.Camera) ([][]string, map[string]*brivo.Preview) {
+	// Cache hit? (empty groups = negative cache → skip straight to fallback.)
+	s.sceneMu.Lock()
+	e, ok := s.sceneCache[authKey]
+	s.sceneMu.Unlock()
+	if ok && e.exp.After(time.Now()) {
+		if len(e.groups) == 0 {
+			return nil, nil
+		}
+		return e.groups, nil
 	}
 
-	// Fetch each camera's frame concurrently (bounded by dlSem).
-	type shot struct {
-		cam brivo.Camera
-		p   *brivo.Preview
+	if s.agent == nil || !s.agent.Enabled() {
+		return nil, nil
 	}
-	shots := make([]shot, len(cams))
+
+	// Remember "unavailable" briefly so we don't repeat the expensive fetch+Gemini
+	// path on every open while quota is exhausted (overwritten by success below).
+	negCache := func() { s.sceneMu.Lock(); s.sceneCache[authKey] = sceneEntry{exp: time.Now().Add(sceneNegTTL)}; s.sceneMu.Unlock() }
+
+	// Fetch each camera's frame concurrently (bounded by dlSem).
+	shots := make(map[string]*brivo.Preview, len(cams))
+	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for i, cam := range cams {
+	for _, cam := range cams {
 		wg.Add(1)
-		go func(i int, cam brivo.Camera) {
+		go func(cam brivo.Camera) {
 			defer wg.Done()
 			s.dlSem <- struct{}{}
 			defer func() { <-s.dlSem }()
@@ -304,20 +353,23 @@ func (s *Server) groupByScene(authKey string, sessionID uint, selectedESN, aroun
 				return
 			}
 			if p, err := s.brivo.FetchPreview(authKey, arch, cam.ESN, aroundTs, brivo.PrevMode); err == nil {
-				shots[i] = shot{cam: cam, p: p}
+				mu.Lock()
+				shots[cam.ESN] = p
+				mu.Unlock()
 			}
-		}(i, cam)
+		}(cam)
 	}
 	wg.Wait()
 
 	var items []agent.SceneImage
-	for _, sh := range shots {
-		if sh.p != nil && len(sh.p.Bytes) > 0 {
-			items = append(items, agent.SceneImage{ESN: sh.cam.ESN, JPEG: sh.p.Bytes})
+	for esn, p := range shots {
+		if p != nil && len(p.Bytes) > 0 {
+			items = append(items, agent.SceneImage{ESN: esn, JPEG: p.Bytes})
 		}
 	}
 	if len(items) == 0 {
-		return nil, ""
+		negCache()
+		return nil, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -325,52 +377,36 @@ func (s *Server) groupByScene(authKey string, sessionID uint, selectedESN, aroun
 	groups, err := s.agent.GroupByScene(ctx, items)
 	if err != nil {
 		log.Printf("command-view scene grouping failed, falling back to location: %v", err)
-		return nil, ""
+		negCache()
+		return nil, nil
 	}
 
-	// Find the group containing the selected camera.
-	var group map[string]bool
-	for _, g := range groups {
-		for _, esn := range g {
-			if esn == selectedESN {
-				group = make(map[string]bool, len(g))
-				for _, e := range g {
-					group[e] = true
-				}
-				break
-			}
-		}
-		if group != nil {
-			break
-		}
-	}
-	if group == nil {
-		return nil, "" // Gemini didn't place the selected camera → fall back
-	}
-
-	// Build the response from the selected group, saving the frames we already have.
-	out := make([]types.Camera, 0, len(group))
-	for _, sh := range shots {
-		if sh.p == nil || !group[sh.cam.ESN] {
-			continue
-		}
-		id := store.NewUUID()
-		rel, serr := s.saveImageBytes(sessionID, id, sh.p.Bytes)
-		state := store.StateSuccess
-		if serr != nil {
-			state = store.StateFailure
-		}
-		_ = s.repo.CreateImage(&store.Image{ID: id, SessionID: sessionID, CameraESN: sh.cam.ESN, EENTs: sh.p.TS, Kind: "preview", State: state, Path: rel})
-		out = append(out, types.Camera{ESN: sh.cam.ESN, Name: sh.cam.Name, Location: sh.cam.Location, Status: sh.cam.Status, ImageID: id})
-	}
-	return out, "" // label left blank → caller uses the EEN location string
+	s.sceneMu.Lock()
+	s.sceneCache[authKey] = sceneEntry{groups: groups, exp: time.Now().Add(sceneCacheTTL)}
+	s.sceneMu.Unlock()
+	return groups, shots
 }
 
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
+// groupOf returns the group (slice of ESNs) that contains esn, or nil.
+func groupOf(groups [][]string, esn string) []string {
+	for _, g := range groups {
+		for _, e := range g {
+			if e == esn {
+				return g
+			}
+		}
 	}
-	return b
+	return nil
+}
+
+// findCam looks up a camera by ESN.
+func findCam(cams []brivo.Camera, esn string) (brivo.Camera, bool) {
+	for _, c := range cams {
+		if c.ESN == esn {
+			return c, true
+		}
+	}
+	return brivo.Camera{}, false
 }
 
 // GET /api/image/status?sessionId=&imageId= — poll a preview download's state.

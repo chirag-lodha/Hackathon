@@ -176,12 +176,14 @@ the **frontend executes the actions** (`create_session`, `select_camera`,
   physical place** (`frontend/src/components/CommandView.jsx`, pure DOM/CSS, no 3D).
   Standalone (no holistic run): `POST /api/location-cameras {sessionId, cameraEsn,
   aroundTs}` → `handleLocationCameras`. **Grouping is Gemini-vision-first**
-  (`groupByScene`): it fetches every camera's frame concurrently, asks
+  (`sceneGroups`): it fetches every camera's frame concurrently, asks
   `agent.GroupByScene` to cluster the ones showing the same scene, and returns the
   group containing the selected camera (frames saved as SUCCESS images). If Gemini is
   off/quota-exhausted it **falls back to grouping by the EEN `location` field** (the
   label is coarse — a whole account can share one location, hence the visual pass).
-  The UI polls `/api/image/status` per tile.
+  The UI polls `/api/image/status` per tile. **Scene groups are cached per account**
+  (`Server.sceneCache`, keyed by auth key, 30-min TTL; a 5-min *negative* cache when
+  Gemini is unavailable) so the vision call runs once, not on every Command View open.
 
 ## Database conventions (important)
 
