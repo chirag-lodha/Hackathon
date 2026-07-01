@@ -11,6 +11,8 @@ package hires
 import (
 	"log"
 
+	"lumina/crop"
+	"lumina/internal/config"
 	"lumina/internal/model"
 	"lumina/internal/store"
 )
@@ -20,14 +22,18 @@ import (
 type Processor struct {
 	engine *model.Engine
 	repo   *store.Repo
+	store  *store.Store
+	cfg    *config.Config
 	queue  chan *HiRes
 }
 
 // New builds a Processor. Call Init to start the dispatcher goroutine.
-func New(engine *model.Engine, repo *store.Repo) *Processor {
+func New(engine *model.Engine, repo *store.Repo, st *store.Store, cfg *config.Config) *Processor {
 	return &Processor{
 		engine: engine,
 		repo:   repo,
+		store:  st,
+		cfg:    cfg,
 		queue:  make(chan *HiRes, 64), // buffered so Submit rarely blocks
 	}
 }
@@ -40,6 +46,8 @@ func (p *Processor) Init() {
 		for h := range p.queue {
 			h.engine = p.engine
 			h.repo = p.repo
+			h.store = p.store
+			h.cfg = p.cfg
 			h.execute()
 		}
 	}()
@@ -57,6 +65,8 @@ type HiRes struct {
 	// Injected by the Processor's dispatcher before execute() runs.
 	engine *model.Engine
 	repo   *store.Repo
+	store  *store.Store
+	cfg    *config.Config
 }
 
 // execute processes the trial and updates the database. It kicks off the actual
@@ -85,13 +95,26 @@ func (h *HiRes) execute() {
 			trial.ResultURL = res.OutputURL
 			trial.Sources = store.MarshalSources(res.Sources)
 			trial.DurationMS = res.MS
-		default: // "super_res" — either the built-in upscaler or Gemini ("Nano Banana")
+		default: // "super_res" — either the built-in Upscayl CLI or Gemini ("Nano Banana")
+			// Crop to the ROI once, up front, as a reusable tracked image. Whichever
+			// engine runs then enhances the crop (never the original source frame);
+			// with no ROI the source frame is used directly.
+			input := trial.FilePath
+			if roi != nil && roi.W > 0 && roi.H > 0 {
+				cropRel, err := crop.Source(h.repo, h.store, trial, roi)
+				if err != nil {
+					_ = h.repo.Fail(trial.ID, err.Error())
+					return
+				}
+				input = cropRel
+			}
+
 			var res model.SuperResult
 			var err error
 			if trial.Engine == "gemini" {
-				res, err = h.engine.GeminiEnhance(trial.FilePath, roi)
+				res, err = h.engine.GeminiEnhance(input, nil) // ROI already applied
 			} else {
-				res, err = h.engine.SuperResolve(trial.FilePath, roi)
+				res, err = h.superRes(trial, input) // Upscayl CLI, built-in fallback
 			}
 			if err != nil {
 				_ = h.repo.Fail(trial.ID, err.Error())

@@ -1,5 +1,6 @@
 import { Loader2, ImageOff, Download, Layers } from 'lucide-react'
 import Compare from './Compare.jsx'
+import { imageURL } from '../api/client.js'
 
 export default function ResultViewer({ mode, loading, note, result, error }) {
   if (loading) {
@@ -25,10 +26,15 @@ export default function ResultViewer({ mode, loading, note, result, error }) {
     )
   }
 
+  // Prefer the tracked crop/output images (served via /api/images) and fall back
+  // to the raw result URLs (holistic, mock, older history records).
+  const afterUrl = result.outputImageId ? imageURL(result.outputImageId) : result.imageUrl
+  const beforeUrl = result.sourceImageId ? imageURL(result.sourceImageId) : result.sourceUrl
+
   const download = () => {
     const a = document.createElement('a')
-    a.href = result.imageUrl
-    a.download = `${result.type}-${Date.now()}.svg`
+    a.href = afterUrl
+    a.download = `${result.type}-${Date.now()}.png`
     a.click()
   }
 
@@ -47,10 +53,10 @@ export default function ResultViewer({ mode, loading, note, result, error }) {
       </div>
 
       {result.type === 'super_res' ? (
-        <Compare before={result.sourceUrl} after={result.imageUrl} />
+        <Compare before={beforeUrl} after={afterUrl} />
       ) : (
         <>
-          <img className="rv-main" src={result.imageUrl} alt="holistic view" />
+          <img className="rv-main" src={afterUrl} alt="holistic view" />
           <div className="rv-sources">
             <span className="rv-sources-label">Fused from</span>
             <div className="rv-source-grid">

@@ -7,9 +7,10 @@ fused view of the same location. Every action is recorded as a *Trial* in Postgr
 and browsable in a history gallery.
 
 > Status: **live Eagle Eye Networks (EEN) integration** — real cameras, real
-> preview frames (downloaded asynchronously), fed to a **stand-in** super-resolution
-> model. The EEN pipeline lives in its own `internal/brivo` package; the real
-> super-res model plugs in behind a clean `Upscaler` interface (see
+> preview frames (downloaded asynchronously), enhanced by a **real** super-resolution
+> model: the **Upscayl CLI** (Real-ESRGAN) by default, or Gemini "Nano Banana" per
+> request. The EEN pipeline lives in its own `internal/brivo` package; the Upscayl
+> engine lives in `internal/hires/upscayl.go` (see
 > [What's dummy vs real](#whats-dummy-vs-real)).
 
 ---
@@ -69,10 +70,10 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
   │  server/   router · CORS · logging · SPA + /files static     │
   │  brivo/    EEN pipeline: cameras · archiver health · previews │
   │  camera/   dummy frame source (legacy /api/frames fallback)  │
-  │  model/    Upscaler iface · DummyUpscaler · holistic fusion  │
+  │  model/    holistic fusion · legacy Upscaler/DummyUpscaler   │
   │  imaging/  resize · crop · enhance · composite (pure stdlib)  │
   │  store/    images + Postgres (GORM repo, migrations, models) │
-  │  hires/    async super-res worker  ·  agent/  Gemini chat    │
+  │  hires/    async super-res worker (Upscayl CLI) · agent/ Gemini │
   └───────────────┬─────────────────────────────┬────────────────┘
                   │                             │
                   ▼                             ▼
@@ -100,16 +101,21 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 
 **Request flow for a super-res enhancement (async, return-then-poll):**
 
-1. UI `POST /api/super-resolve` with the frame path + optional ROI.
-2. Handler creates a **Trial** row (`state = CREATED`), hands it to the **HiRes
-   processor** (`internal/hires`), and returns **`202`** immediately with the trial id.
-3. In the background, the processor flips the trial to `PROCESSING`, then
-   `model.DummyUpscaler` loads the source image → crops the ROI → bilinear-upscales
-   → applies a sharpen/contrast "enhance" pass → writes a high-res PNG to
-   `data/outputs/`.
-4. Trial updated to `SUCCESS` with the result path/URL (or `FAILURE` + error).
+1. UI `POST /api/super-resolve` with the frame path + optional ROI + `engine`.
+2. Handler creates a **Trial** row (`state = CREATED`, `engine = upscayl|gemini`),
+   hands it to the **HiRes processor** (`internal/hires`), and returns **`202`**
+   immediately with the trial id.
+3. In the background the processor flips the trial to `PROCESSING`. For `upscayl`
+   (default), `hires/upscayl.go` optionally crops the ROI, then shells out to the
+   **Upscayl CLI** (`upscayl-bin -i … -o … -m … -n …`, Real-ESRGAN) to produce the
+   high-res image; **if the CLI is missing or fails it degrades to the built-in
+   upscaler** so the trial still succeeds. For `gemini`, `Engine.GeminiEnhance` calls
+   the Nano Banana model. The **ROI crop and the output are each saved as their own
+   `images` row** (`sessions/{id}/images/{uuid}.png`).
+4. Trial updated to `SUCCESS` with the result path/URL and the crop/output image ids
+   (`sourceImageId` / `outputImageId`), or `FAILURE` + error.
 5. The UI polls `GET /api/trials/{id}` until `SUCCESS`/`FAILURE`, then renders the
-   image URL. The image bytes are served from `/files/...`.
+   images — loaded by id via `/api/images` (falling back to the `/files/...` URLs).
 
 > Holistic (`POST /api/alternate`) still runs the pipeline **synchronously** and
 > returns the result in one response.
@@ -212,8 +218,9 @@ Brivo Lumina turns low-resolution camera frames into crisp, high-fidelity imager
 
 - ✅ **Real camera integration** — done: `internal/brivo` lists real cameras and
   downloads real preview frames via the account auth key + archiver health API
-- **Real super-resolution model** — replace `DummyUpscaler` (implement `Upscaler`);
-  real JPEG previews currently get a load → sharpen-upscale pass
+- ✅ **Real super-resolution model** — done: the default engine shells out to the
+  **Upscayl CLI** (Real-ESRGAN) in `internal/hires/upscayl.go`; Gemini "Nano Banana"
+  is available per request
 - **Real holistic logic** — resolve the actual co-located cameras and fuse them
 - **Async processing** — super-res is fully async end-to-end: backend returns `202`
   + `CREATED`, and the frontend (`client.js` `superResolve`) polls
@@ -289,8 +296,8 @@ All endpoints are JSON. Generated images are served under `/files/...`.
 | POST | `/api/location-cameras` | `{sessionId, cameraEsn, aroundTs?, authKey?}` | `{location, cameras:[{esn,name,location,status,imageId}], groupedBy}` — cameras showing the same scene as the selected one for the Command View wall. `groupedBy` = `scene` (Gemini vision) or `location` (EEN-label fallback when Gemini is unavailable) |
 | GET | `/api/image/status` | `?imageId=` | `{id, state, ts, error?, caption?, captionState?}` — poll a preview download (and its Gemini caption) |
 | GET | `/api/images` | `?imageId=` | the downloaded preview JPEG (or `202` if not ready) |
-| POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?, engine?}` | **`202`** `{id, type, engine, state:"CREATED", roi}` — enqueued; poll for the result. `engine` = `dummy` (built-in) or `gemini` (Nano Banana) |
-| GET | `/api/trials/{id}` | — | `{id, type, state, imageUrl?, sourceUrl?, scale?, sources?, roi, ms, error?}` — poll an async trial |
+| POST | `/api/super-resolve` | `{imagePath, cameraEsn, sessionName?, frameTimestamp?, frameLabel?, roi?, engine?}` | **`202`** `{id, type, engine, state:"CREATED", roi}` — enqueued; poll for the result. `engine` = `upscayl` (built-in Upscayl CLI, default) or `gemini` (Nano Banana) |
+| GET | `/api/trials/{id}` | — | `{id, type, state, imageUrl?, sourceUrl?, outputImageId?, sourceImageId?, scale?, sources?, roi, ms, error?}` — poll an async trial (`outputImageId`/`sourceImageId` load the tracked output/crop images via `/api/images`) |
 | POST | `/api/alternate` | `{imagePath, cameraEsn, sessionName?, ..., roi?}` | `{id, state, imageUrl, sources[], ms}` — holistic (synchronous) |
 | POST | `/api/history` | `{}` | `{records[]}` — successful trials, newest first |
 | POST | `/api/chat` | `{messages[], context}` | `{reply, actions[]}` — Brivo (Gemini) agent |
@@ -360,15 +367,18 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
   and reads the `x-ee-timestamp` / `x-ee-prev` / `x-ee-next` headers to walk frames.
   Downloaded JPEGs are stored under `data/sessions/{id}/images/`. The old dummy
   synthesizer in `internal/camera` is kept only for the legacy `/api/frames` route.
-- **Super-resolution** (`internal/model`): two engines, chosen per request via the
-  `engine` field. **`dummy`** (default) is the built-in stand-in — regenerates
-  *generated* `.png` scenes at high resolution, and for **real `.jpg` previews**
-  does a load → crop → sharpen-upscale pass. **`gemini`** sends the frame to Gemini
-  2.5 Flash Image ("Nano Banana") and saves the AI-generated high-res result
-  (`Engine.GeminiEnhance` → `agent.GenerateImage`). Both write to `data/outputs/`.
-  The Gemini engine is **real** but needs a billed key (image generation is not
-  free-tier); it fails cleanly to a `FAILURE` trial otherwise. **Later:** the
-  `Upscaler` interface still lets you swap in another local model in `NewEngine`.
+- **Super-resolution**: two **real** engines, chosen per request via the `engine`
+  field. **`upscayl`** (default, `internal/hires/upscayl.go`) shells out to the
+  **Upscayl CLI** (Real-ESRGAN) — `upscayl-bin -i … -o … -m … -n …` — after
+  optionally cropping the ROI. **`gemini`** sends the frame to Gemini 2.5 Flash Image
+  ("Nano Banana") and saves the AI-generated result (`Engine.GeminiEnhance` →
+  `agent.GenerateImage`); it needs a billed key (image generation is not free-tier)
+  and fails cleanly to a `FAILURE` trial otherwise. The ROI crop and the output are
+  each saved as their own `images` row under `data/sessions/{id}/images/`. The
+  Upscayl binary/models/model name are configurable (`LUMINA_UPSCAYL_*`). *(If
+  Upscayl is unavailable or fails, the trial degrades to the built-in
+  `model.DummyUpscaler` — load → crop → sharpen-upscale — so it still produces a
+  result.)*
 - **Holistic** (`internal/model`): derives co-located cameras from the ESN and
   composites enhanced views. **Later:** resolve the real camera set for the location
   and fuse their frames.
@@ -380,9 +390,12 @@ button on each result (on hover) and a **Delete all** button. Type `delete` agai
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `LUMINA_ADDR` | `:8080` | listen address |
-| `LUMINA_DATA_DIR` | `data` | root for `captures/` and `outputs/` image files |
+| `LUMINA_DATA_DIR` | `data` | root for `sessions/`, `captures/`, `outputs/` image files |
 | `LUMINA_FRONTEND_DIR` | _(empty)_ | built UI dir; serves the SPA when set |
-| `LUMINA_SR_SCALE` | `4` | super-resolution upscale factor |
+| `LUMINA_SR_SCALE` | `4` | super-resolution upscale factor (reported scale; also the Upscayl fallback) |
+| `LUMINA_UPSCAYL_BIN` | `/opt/Upscayl/resources/bin/upscayl-bin` | Upscayl CLI binary (built-in super-res engine) |
+| `LUMINA_UPSCAYL_MODELS` | `/opt/Upscayl/resources/models` | Upscayl models directory (`-m`) |
+| `LUMINA_UPSCAYL_MODEL` | `upscayl-standard-4x` | Upscayl model name (`-n`) |
 | `LUMINA_CAMERA_API` | _(empty)_ | optional override for the camera/VMS base URL (unused by `brivo`, which derives the cluster host from the auth key's `cXXX~` prefix) |
 | `LUMINA_CAMERA_AUTHKEY` | _(empty)_ | optional fallback auth key (normally the key comes from the user's session) |
 | `DATABASE_URL` | `postgres://lumina:lumina@localhost:5433/lumina?sslmode=disable` | Postgres connection |

@@ -56,7 +56,7 @@ type SuperResolveRequest struct {
 	FrameTimestamp string `json:"frameTimestamp"`
 	FrameLabel     string `json:"frameLabel"`
 	ROI            *ROI   `json:"roi"`    // nil => whole frame
-	Engine         string `json:"engine"` // "" | "dummy" | "gemini" (Nano Banana)
+	Engine         string `json:"engine"` // "" | "upscayl" | "gemini" (Nano Banana)
 }
 
 type SuperResolveResponse struct {
@@ -79,11 +79,16 @@ type SuperResolveResponse struct {
 type TrialStatusResponse struct {
 	ID        string           `json:"id"`
 	Type      string           `json:"type"`             // "super_res" | "holistic"
-	Engine    string           `json:"engine,omitempty"` // "" | "dummy" | "gemini"
+	Engine    string           `json:"engine,omitempty"` // "" | "upscayl" | "gemini"
 	State     string           `json:"state"`            // CREATED | PROCESSING | SUCCESS | FAILURE
 	ImageURL  string           `json:"imageUrl,omitempty"`
 	SourceURL string           `json:"sourceUrl,omitempty"`
-	Scale     int              `json:"scale,omitempty"`
+	// Image ids for the tracked crop/output images (super-res), loaded via
+	// /api/images. OutputImageID is the enhanced result; SourceImageID is the
+	// before image (the ROI crop when an ROI was used, else the source frame).
+	OutputImageID string `json:"outputImageId,omitempty"`
+	SourceImageID string `json:"sourceImageId,omitempty"`
+	Scale         int    `json:"scale,omitempty"`
 	Sources   []HolisticSource `json:"sources,omitempty"`
 	ROI       *ROI             `json:"roi"`
 	MS        int64            `json:"ms"`
