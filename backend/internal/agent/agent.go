@@ -323,3 +323,76 @@ func (a *Agent) GenerateImage(ctx context.Context, img []byte, mimeType, prompt 
 	}
 	return nil, "", fmt.Errorf("gemini image: no image in response")
 }
+
+// SceneImage is one camera's frame for scene grouping.
+type SceneImage struct {
+	ESN  string
+	JPEG []byte
+}
+
+const groupPrompt = `You are given still frames from several security cameras, each labeled "Camera <id>:" just before its image.
+Group the cameras that are physically at the SAME location / show the SAME scene (same room, corridor, street, parking area, entrance — they may be different angles of that same place). Cameras showing clearly DIFFERENT places belong to different groups.
+Return ONLY JSON of this exact shape: {"groups": [["<id>", "<id>"], ["<id>"]]}. Every camera id you were given must appear in exactly one group. Use the exact ids provided.`
+
+// GroupByScene sends every camera's frame to Gemini vision in one call and asks
+// it to cluster the cameras that show the same physical place. Returns groups of
+// ESNs. Uses the (vision-capable) caption model.
+func (a *Agent) GroupByScene(ctx context.Context, items []SceneImage) ([][]string, error) {
+	if !a.Enabled() {
+		return nil, fmt.Errorf("agent not configured")
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no images to group")
+	}
+
+	parts := []geminiPart{{Text: groupPrompt}}
+	for _, it := range items {
+		if len(it.JPEG) == 0 {
+			continue
+		}
+		parts = append(parts, geminiPart{Text: "Camera " + it.ESN + ":"})
+		parts = append(parts, geminiPart{InlineData: &geminiBlob{MIMEType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(it.JPEG)}})
+	}
+
+	body := geminiReq{
+		Contents:         []geminiContent{{Role: "user", Parts: parts}},
+		GenerationConfig: map[string]any{"responseMimeType": "application/json", "temperature": 0.1},
+	}
+	buf, _ := json.Marshal(body)
+
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", a.captionModel, a.apiKey)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	res, err := a.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("gemini group request: %w", err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+
+	var gr geminiResp
+	if err := json.Unmarshal(raw, &gr); err != nil {
+		return nil, fmt.Errorf("gemini group decode: %w", err)
+	}
+	if gr.Error != nil {
+		return nil, fmt.Errorf("gemini group error: %s", gr.Error.Message)
+	}
+	if len(gr.Candidates) == 0 || len(gr.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("gemini group: empty response")
+	}
+	var out string
+	for _, p := range gr.Candidates[0].Content.Parts {
+		out += p.Text
+	}
+	var parsed struct {
+		Groups [][]string `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &parsed); err != nil {
+		return nil, fmt.Errorf("gemini group parse: %w", err)
+	}
+	return parsed.Groups, nil
+}

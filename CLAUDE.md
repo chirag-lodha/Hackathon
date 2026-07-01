@@ -172,12 +172,16 @@ the **frontend executes the actions** (`create_session`, `select_camera`,
   reply; the rest of the app works normally. `GEMINI_MODEL` defaults to
   `gemini-2.0-flash` (use `gemini-2.5-flash-lite` for the biggest free quota).
 - **Command View** is the `command_view` action: a synchronized multi-camera wall
-  — one enlarged focus feed plus a clickable grid of **the real cameras that share
-  the selected camera's EEN `location`** (`frontend/src/components/CommandView.jsx`,
-  pure DOM/CSS, no 3D deps). Standalone (no holistic run needed): it calls
-  `POST /api/location-cameras {sessionId, cameraEsn, aroundTs}` → `handleLocationCameras`
-  groups `brivo.Cameras` by the `location` field and kicks off a preview download per
-  co-located camera at that moment; the UI polls `/api/image/status` per tile.
+  — one enlarged focus feed plus a clickable grid of the cameras showing the **same
+  physical place** (`frontend/src/components/CommandView.jsx`, pure DOM/CSS, no 3D).
+  Standalone (no holistic run): `POST /api/location-cameras {sessionId, cameraEsn,
+  aroundTs}` → `handleLocationCameras`. **Grouping is Gemini-vision-first**
+  (`groupByScene`): it fetches every camera's frame concurrently, asks
+  `agent.GroupByScene` to cluster the ones showing the same scene, and returns the
+  group containing the selected camera (frames saved as SUCCESS images). If Gemini is
+  off/quota-exhausted it **falls back to grouping by the EEN `location` field** (the
+  label is coarse — a whole account can share one location, hence the visual pass).
+  The UI polls `/api/image/status` per tile.
 
 ## Database conventions (important)
 

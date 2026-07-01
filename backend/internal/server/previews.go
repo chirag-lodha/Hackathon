@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"lumina/internal/agent"
 	"lumina/internal/brivo"
 	"lumina/internal/store"
 	"lumina/internal/types"
@@ -235,9 +237,8 @@ func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the selected camera's location, then keep only cameras at that same
-	// location. If the location is unknown/blank, fall back to just the camera
-	// itself so the wall still renders something meaningful.
+	// The selected camera's EEN location — used as a human label and as the
+	// fallback grouping if visual grouping isn't available.
 	var location string
 	for _, c := range cams {
 		if c.ESN == req.CameraESN {
@@ -246,6 +247,16 @@ func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Primary path: let Gemini VISION decide which cameras show the same physical
+	// place (the EEN location label can be coarse — every camera on one account may
+	// share it). We grab each camera's frame, ask Gemini to cluster them, and keep
+	// the group containing the selected camera. Falls back to the location label.
+	if out, grp := s.groupByScene(authKey, sessionID, req.CameraESN, req.AroundTs, cams); len(out) > 0 {
+		writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: firstNonEmpty(grp, location), Cameras: out})
+		return
+	}
+
+	// Fallback: group by the EEN location field (async downloads).
 	out := make([]types.Camera, 0)
 	for _, cam := range cams {
 		sameLocation := location != "" && cam.Location == location
@@ -263,6 +274,103 @@ func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out})
+}
+
+// groupByScene fetches every camera's frame, asks Gemini to cluster the ones that
+// show the same physical place, and returns the cameras in the selected camera's
+// group (previews already downloaded → SUCCESS images). Returns nil if Gemini is
+// unavailable/fails, so the caller falls back to location-label grouping. The
+// second return is a short human label for the group.
+func (s *Server) groupByScene(authKey string, sessionID uint, selectedESN, aroundTs string, cams []brivo.Camera) ([]types.Camera, string) {
+	if s.agent == nil || !s.agent.Enabled() {
+		return nil, ""
+	}
+
+	// Fetch each camera's frame concurrently (bounded by dlSem).
+	type shot struct {
+		cam brivo.Camera
+		p   *brivo.Preview
+	}
+	shots := make([]shot, len(cams))
+	var wg sync.WaitGroup
+	for i, cam := range cams {
+		wg.Add(1)
+		go func(i int, cam brivo.Camera) {
+			defer wg.Done()
+			s.dlSem <- struct{}{}
+			defer func() { <-s.dlSem }()
+			arch, err := s.brivo.Archiver(authKey, cam.ESN)
+			if err != nil {
+				return
+			}
+			if p, err := s.brivo.FetchPreview(authKey, arch, cam.ESN, aroundTs, brivo.PrevMode); err == nil {
+				shots[i] = shot{cam: cam, p: p}
+			}
+		}(i, cam)
+	}
+	wg.Wait()
+
+	var items []agent.SceneImage
+	for _, sh := range shots {
+		if sh.p != nil && len(sh.p.Bytes) > 0 {
+			items = append(items, agent.SceneImage{ESN: sh.cam.ESN, JPEG: sh.p.Bytes})
+		}
+	}
+	if len(items) == 0 {
+		return nil, ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	groups, err := s.agent.GroupByScene(ctx, items)
+	if err != nil {
+		log.Printf("command-view scene grouping failed, falling back to location: %v", err)
+		return nil, ""
+	}
+
+	// Find the group containing the selected camera.
+	var group map[string]bool
+	for _, g := range groups {
+		for _, esn := range g {
+			if esn == selectedESN {
+				group = make(map[string]bool, len(g))
+				for _, e := range g {
+					group[e] = true
+				}
+				break
+			}
+		}
+		if group != nil {
+			break
+		}
+	}
+	if group == nil {
+		return nil, "" // Gemini didn't place the selected camera → fall back
+	}
+
+	// Build the response from the selected group, saving the frames we already have.
+	out := make([]types.Camera, 0, len(group))
+	for _, sh := range shots {
+		if sh.p == nil || !group[sh.cam.ESN] {
+			continue
+		}
+		id := store.NewUUID()
+		rel, serr := s.saveImageBytes(sessionID, id, sh.p.Bytes)
+		state := store.StateSuccess
+		if serr != nil {
+			state = store.StateFailure
+		}
+		_ = s.repo.CreateImage(&store.Image{ID: id, SessionID: sessionID, CameraESN: sh.cam.ESN, EENTs: sh.p.TS, Kind: "preview", State: state, Path: rel})
+		out = append(out, types.Camera{ESN: sh.cam.ESN, Name: sh.cam.Name, Location: sh.cam.Location, Status: sh.cam.Status, ImageID: id})
+	}
+	return out, "" // label left blank → caller uses the EEN location string
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // GET /api/image/status?sessionId=&imageId= — poll a preview download's state.
