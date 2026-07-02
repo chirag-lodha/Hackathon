@@ -5,6 +5,12 @@ const SessionContext = createContext(null)
 
 const HISTORY_KEY = 'lumina.history'
 const ADMIN_KEY = 'lumina.admin'
+// The active session + selected camera are persisted so a page refresh keeps you
+// on the camera/preview page instead of bouncing to New Session. We store only
+// {id,name} for the session — NOT the auth key (the backend resolves the key from
+// the session id server-side), so the key never sits in browser storage.
+const SESSION_KEY = 'lumina.session'
+const CAMERA_KEY = 'lumina.camera'
 // Secret sequence: type this (outside any text field) to toggle hidden delete mode.
 const SECRET = 'delete'
 
@@ -16,6 +22,14 @@ function loadHistory() {
   }
 }
 
+function loadJSON(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || 'null')
+  } catch {
+    return null
+  }
+}
+
 export function SessionProvider({ children }) {
   // Auth: logged-in user (null = logged out). authChecked flips once /api/me resolves.
   const [user, setUser] = useState(null)
@@ -24,11 +38,41 @@ export function SessionProvider({ children }) {
     fetchMe().then((u) => setUser(u)).finally(() => setAuthChecked(true))
   }, [])
 
-  // The active session (id + name + auth key) from the New form.
-  const [session, setSession] = useState(null)
-  // The camera selected on the camera-grid page (esn, name, anchorTs).
-  const [camera, setCamera] = useState(null)
+  // The active session ({id,name}) and selected camera ({esn,name,anchorTs}),
+  // restored from localStorage so a refresh keeps the current page.
+  const [session, setSessionState] = useState(() => loadJSON(SESSION_KEY))
+  const [camera, setCameraState] = useState(() => loadJSON(CAMERA_KEY))
+
+  // setSession/setCamera also persist (session without the auth key). Passing
+  // null clears both the state and storage.
+  const setSession = useCallback((s) => {
+    setSessionState(s)
+    try {
+      if (s) localStorage.setItem(SESSION_KEY, JSON.stringify({ id: s.id, name: s.name }))
+      else localStorage.removeItem(SESSION_KEY)
+    } catch {}
+  }, [])
+  const setCamera = useCallback((c) => {
+    setCameraState(c)
+    try {
+      if (c) localStorage.setItem(CAMERA_KEY, JSON.stringify(c))
+      else localStorage.removeItem(CAMERA_KEY)
+    } catch {}
+  }, [])
+
   const [history, setHistory] = useState(loadHistory)
+
+  // logout clears the auth cookie AND the persisted session/camera, so the next
+  // login starts clean (and New Session only reappears after an explicit logout
+  // or when there's no session at all).
+  const logout = useCallback(async () => {
+    try {
+      await fetch('/api/logout', { method: 'POST' })
+    } catch {}
+    setUser(null)
+    setSession(null)
+    setCamera(null)
+  }, [setSession, setCamera])
 
   // Hidden admin (delete) mode — revealed only via the secret key sequence.
   const [adminMode, setAdminMode] = useState(() => {
@@ -109,7 +153,7 @@ export function SessionProvider({ children }) {
   return (
     <SessionContext.Provider
       value={{
-        user, setUser, authChecked,
+        user, setUser, authChecked, logout,
         session, setSession, camera, setCamera, history, addHistory, removeHistory, clearHistory,
         adminMode, toggleAdmin, commandQueue, dispatchCommand, shiftCommand,
         workspaceStatus, setWorkspaceStatus,

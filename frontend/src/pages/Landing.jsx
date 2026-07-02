@@ -2,7 +2,6 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Plus, History as HistoryIcon, ArrowRight, Sparkles, LogOut } from 'lucide-react'
 import { useSession } from '../context/SessionContext.jsx'
-import { logout as apiLogout } from '../api/client.js'
 
 const fade = {
   initial: { opacity: 0, y: 12 },
@@ -12,12 +11,9 @@ const fade = {
 
 export default function Landing() {
   const nav = useNavigate()
-  const { user, setUser } = useSession()
+  const { user, logout } = useSession()
 
-  const doLogout = async () => {
-    try { await apiLogout() } catch {}
-    setUser(null)
-  }
+  const doLogout = () => logout() // clears cookie + persisted session/camera
 
   return (
     <motion.div className="landing" variants={fade} initial="initial" animate="animate" exit="exit" transition={{ duration: 0.4 }}>

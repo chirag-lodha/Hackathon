@@ -17,7 +17,11 @@ full feature/usage write-up.
 **Frontend flow:** Login → New Session (name + auth key only) → **Cameras** (grid;
 each tile async-downloads its latest preview) → Workspace (filmstrip of previews +
 Super-Res/Holistic). `SessionContext` holds `session` `{id,name,authKey}` and the
-separately-selected `camera` `{esn,name,anchorTs}`.
+separately-selected `camera` `{esn,name,anchorTs}`. **`session` (as `{id,name}` — no
+auth key) and `camera` are persisted to localStorage** so a refresh keeps the current
+page instead of bouncing to New Session; `logout()` (in `SessionContext`) clears the
+cookie + both keys. The backend resolves the auth key from the session id, so it
+never needs to live in browser storage.
 
 ## Commands
 
