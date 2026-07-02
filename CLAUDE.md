@@ -61,12 +61,13 @@ whatever port the dev backend uses.
 ## Architecture (big picture)
 
 Request flow for an enhancement (read these together to understand it):
-`server/handlers.go` → `store` (create Trial via `Repo`, set state) → `model`
-(run pipeline) → `store`/`imaging` (write PNG) → Trial updated → JSON response
-with a `/files/...` URL. The `store` package is the whole persistence layer:
-Postgres (Repo/models/migrations) **and** the on-disk image store. Super-res
-runs this pipeline **asynchronously** via the HiRes processor (see below);
-holistic runs it inline.
+`server/handlers.go` → `store` (create Trial via `Repo`, set state) → the engine
+(super-res: the **Upscayl CLI** in `internal/hires`, or Gemini; holistic:
+`internal/model`) → `store`/`imaging` (write image) → Trial updated → JSON response
+with a `/files/...` URL (or image ids loaded via `/api/images`). The `store` package
+is the whole persistence layer: Postgres (Repo/models/migrations) **and** the on-disk
+image store. Super-res runs **asynchronously** via the HiRes processor (see below);
+holistic runs inline.
 
 - **Frontend ↔ backend contract** lives in two places that MUST agree:
   `frontend/src/api/client.js` (+ `mock.js`) and `backend/internal/types/types.go`.
@@ -74,18 +75,42 @@ holistic runs it inline.
 - **`frontend/src/api/client.js` has `USE_MOCK`** — when `true`, the UI runs fully
   offline against `mock.js` (no backend/DB needed); when `false` it calls the real
   `/api`. Changing the API contract means updating client.js, mock.js, AND types.go.
-- **Image serving:** the backend writes PNGs under `data/{captures,outputs}` and
-  serves them at `/files/...`. API responses return URLs, never image bytes. In dev,
-  Vite proxies BOTH `/api` and `/files` to the backend.
+- **Image serving:** the backend writes images under `data/` — previews +
+  super-res crop/output at `sessions/<id>/images/`, holistic + legacy outputs at
+  `outputs/`, dummy captures at `captures/` — and serves them at `/files/...`. API
+  responses return URLs (or image ids loaded via `/api/images`), never image bytes.
+  In dev, Vite proxies BOTH `/api` and `/files` to the backend.
 - **HiRes processor** (`internal/hires`): the async job runner for super-res.
-  `hires.New(engine, repo)` is constructed in `main.go` and `Init()` starts a
-  single **dispatcher goroutine** that ranges over a buffered channel of `*HiRes`
-  (each carries only a `TrialID`). Handlers call `s.hires.Submit(...)`; the
-  dispatcher injects deps and calls `execute()`, which spins up its own goroutine
-  to load the trial, run the model (branching on `trial.Type`), and persist the
-  result. The `Processor` is passed into `server.New` so handlers can reach it.
-  Note: `width`/`height` are not persisted on `trials`, so the async poll does not
-  return them (add columns + a migration if needed).
+  `hires.New(engine, repo, store, cfg)` is constructed in `main.go` and `Init()`
+  starts a single **dispatcher goroutine** that ranges over a buffered channel of
+  `*HiRes` (each carries only a `TrialID`). Handlers call `s.hires.Submit(...)`; the
+  dispatcher injects deps and calls `execute()`, which spins up its own goroutine to
+  load the trial and persist the result. `execute()` branches on `trial.Type`:
+  `holistic` → `engine.Holistic`; `super_res` → **crop once up front** via the
+  standalone `crop.Source` (package `lumina/crop` — ROI → a tracked crop image,
+  reusable by any trial/engine; source frame untouched), then
+  `engine.GeminiEnhance(crop, nil)` when
+  `trial.Engine == "gemini"`, **else the real Upscayl CLI** (`superRes`, see the
+  Upscayl bullet) — which falls back to the built-in upscaler if Upscayl fails. The
+  processor holds `store`+`cfg` (not just the engine) because the super-res path
+  resolves file paths and reads the Upscayl config itself. The `Processor` is passed
+  into `server.New` so handlers can reach it. Note: `width`/`height` are not persisted
+  on `trials`, so the async poll does not return them (add columns + a migration if
+  needed).
+- **Upscayl super-res engine (`internal/hires/upscayl.go`) — the real default
+  engine.** `(*HiRes).superRes` enhances the (already-cropped, or full) input frame
+  by shelling out to the Upscayl CLI (Real-ESRGAN):
+  `upscayl-bin -i <in> -o <out> -m <models> -n <model>`. Input = the trial's frame
+  resolved via `store.Abs` (same path scheme as archiver downloads). **The ROI crop
+  (from `crop.Source`) and the enhanced output are each persisted as their own
+  `images` row** (Postgres-generated id, named `sessions/<id>/images/<uuid>.png`, no
+  prefix) and recorded on the trial as `ROICropFilename` / `OutputFilename`; the
+  trial-status API exposes their ids as `sourceImageId` / `outputImageId` so the UI
+  loads them via `/api/images`. Binary, models dir, and model name are config-driven:
+  `LUMINA_UPSCAYL_BIN` / `LUMINA_UPSCAYL_MODELS` / `LUMINA_UPSCAYL_MODEL` (defaults
+  `/opt/Upscayl/...`, `upscayl-standard-4x`). **If the CLI is missing or fails,
+  `superRes` degrades to the built-in sharpen-upscale (`dummyEnhance`) into the SAME
+  tracked output image** (source never modified), so the trial still succeeds.
 - **EEN pipeline (`internal/brivo`) — the REAL camera/preview integration.**
   Reusable, stateless client (auth key passed per call). Key exports: `IsKey` (does
   the key contain `~`), `Cameras(authKey)` (GET `<cluster>/g/device/list`, cluster
@@ -97,7 +122,8 @@ holistic runs it inline.
   `YYYYMMDDhhmmss.fff` (UTC) — `TimeLayout`, `Now()`, `ParseTS`.
 - **Async preview flow (`internal/server/previews.go`):**
   - `POST /api/cameras {sessionId}` → `brivo.Cameras` → per camera create an `images`
-    row (`state=PROCESSING`, uuid id), return `{cameras[], images:{esn:imageId}}`,
+    row (`state=PROCESSING`; Postgres assigns the uuid id, read back from the created
+    row), return `{cameras[], images:{esn:imageId}}`,
     and start `downloadPreviewAsync` (goroutine, bounded by `Server.dlSem`) which
     picks the archiver, fetches the latest preview, writes it to
     `sessions/{id}/images/{imageId}.jpeg`, and sets the row `SUCCESS`/`FAILURE`.
@@ -126,16 +152,15 @@ holistic runs it inline.
   - `internal/camera` (legacy) synthesizes frames per `(ESN, timestamp)`, **softened**
     so the stored frame looks low-res. Now only backs the legacy `/api/frames` route
     (the UI uses `brivo` previews instead). `FetchFrames` ignores the auth key.
-  - `internal/model` has an `Upscaler` interface; `DummyUpscaler` simulates detail
-    recovery by regenerating the scene at high resolution (the soft source can't be
-    sharpened into detail). It derives the scene seed from the capture path
-    (`seedFromPath`, which requires a `.png` suffix); **real `.jpg` previews from
-    `brivo` fall back to load → crop → sharpen-upscale**. Swap a real model in
-    `model.NewEngine`.
+  - `internal/model` has an `Upscaler` interface + `DummyUpscaler` (regenerate the
+    scene at high res / sharpen-upscale real pixels). The live default is the real
+    Upscayl CLI (`internal/hires/upscayl.go`), but `Engine.SuperResolve` /
+    `DummyUpscaler` is the **fallback**: if Upscayl is unavailable or fails, `execute()`
+    degrades to it so the trial still produces a result.
   - **Gemini super-res engine (`gemini`) — real.** `Engine.GeminiEnhance` (crop to
     ROI → PNG → `agent.GenerateImage`, the Gemini 2.5 Flash Image "Nano Banana"
     model) is wired via `Engine.SetImageGenerator(ag)` in `main.go`. `HiRes` picks
-    it when `trial.Engine == "gemini"`, else the dummy upscaler. Selected per
+    it when `trial.Engine == "gemini"`, else the Upscayl CLI. Selected per
     request (`SuperResolveRequest.Engine`); the handler only honors `gemini` when
     `engine.GeminiAvailable()`. **Image generation is NOT free-tier** (`limit: 0`)
     — without a billed key the trial fails cleanly with the quota error.
@@ -203,13 +228,18 @@ the **frontend executes the actions** (`create_session`, `select_camera`,
   (user_id, name, auth_key, expires_at = +24h), **`images`** (one row per downloaded
   preview). Migrations: `000001_init` (trials), `000002_auth` (users, sessions),
   `000003_images` (images), `000004_image_caption` (Gemini caption columns),
-  `000005_trial_engine` (`trials.engine`: `dummy`|`gemini`).
+  `000005_trial_engine` (`trials.engine`: `upscayl`|`gemini`),
+  `000006_images_id_default` (Postgres generates `images.id` via
+  `gen_random_uuid()`), `000007_trial_output_files` (`trials.roi_crop_filename` +
+  `trials.output_filename` — the crop/output images a super-res trial produces).
   `trials`/`users`/`sessions` use `gorm.Model`
   (`id/created_at/updated_at/deleted_at` — do not redeclare). **`images` is the
-  exception:** its `id` is a **TEXT uuid** (not a bigint) so the frontend can
-  reference a download before it completes — set it via `store.NewUUID()`, don't use
-  `gorm.Model`. Repo helpers: `CreateImage`, `GetImage`, `ImageDone(id,path,eenTs)`,
-  `ImageFailed(id,msg)`, `ImageCaptioning(id)` / `ImageCaptioned(id,caption,ok)`.
+  exception:** its `id` is a **TEXT uuid** (not a bigint), **generated by Postgres**
+  (`DEFAULT gen_random_uuid()`) and returned by `CreateImage(img) (*Image, error)` —
+  create the row first, then use the returned id to name/write its file (there is no
+  more `store.NewUUID`). Don't use `gorm.Model`. Repo helpers: `CreateImage`,
+  `GetImage`, `ImageDone(id,path,eenTs)`, `ImageFailed(id,msg)`,
+  `ImageCaptioning(id)` / `ImageCaptioned(id,caption,ok)`.
   Migration `000004_image_caption` adds `caption` + `caption_state` (Gemini vision).
 - **State lifecycle**: `CREATED` → `PROCESSING` → `SUCCESS`/`FAILURE`.
   - **`super_res` is async** (return-then-poll): `POST /api/super-resolve` creates

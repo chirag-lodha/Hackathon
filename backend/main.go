@@ -53,7 +53,7 @@ func main() {
 
 	// HiRes background processor: start its dispatcher goroutine, then hand it
 	// to the server so handlers can Submit trials for async processing.
-	hp := hires.New(eng, repo)
+	hp := hires.New(eng, repo, st, cfg)
 	hp.Init()
 
 	bv := brivo.New() // Eagle Eye Networks pipeline (cameras + previews)

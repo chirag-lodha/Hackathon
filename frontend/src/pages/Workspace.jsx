@@ -170,7 +170,7 @@ export default function Workspace() {
           frameTimestamp: selected.timestamp,
           frameLabel: selected.label,
           roi,
-          engine, // '' | 'dummy' | 'gemini' (Nano Banana) — ignored for holistic
+          engine, // '' | 'upscayl' | 'gemini' (Nano Banana) — ignored for holistic
         }
         // Super-res is async: submit → poll → SUCCESS. Holistic is synchronous.
         const res =
@@ -348,7 +348,7 @@ export default function Workspace() {
                 </div>
 
                 <div className="ws-actions">
-                  <button className={`ws-action ${!commandView && mode === 'super_res' && result && result.engine !== 'gemini' ? 'active' : ''}`} onClick={() => run2D('super_res', 'dummy')} disabled={resultLoading}>
+                  <button className={`ws-action ${!commandView && mode === 'super_res' && result && result.engine !== 'gemini' ? 'active' : ''}`} onClick={() => run2D('super_res', 'upscayl')} disabled={resultLoading}>
                     <div className="ws-action-ico"><Wand2 size={20} /></div>
                     <div className="ws-action-txt"><strong>Super-Res</strong><span>Fast built-in upscale to high resolution</span></div>
                   </button>

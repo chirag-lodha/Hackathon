@@ -83,8 +83,8 @@ func (s *Server) handleSuperResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Pick the engine: "gemini" (Nano Banana) if requested AND available, else the
-	// built-in upscaler. Falling back keeps the request working when Gemini is off.
-	engine := "dummy"
+	// built-in Upscayl engine. Falling back keeps the request working when Gemini is off.
+	engine := "upscayl"
 	if req.Engine == "gemini" && s.engine.GeminiAvailable() {
 		engine = "gemini"
 	}
@@ -122,18 +122,27 @@ func (s *Server) handleTrialStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "trial not found")
 		return
 	}
+	// The "before" image is the ROI crop when one was produced, else the source
+	// frame. Both the crop and the output are tracked images named by their id,
+	// so the client can load them via /api/images.
+	sourceFile := t.FilePath
+	if t.ROICropFilename != "" {
+		sourceFile = t.ROICropFilename
+	}
 	writeJSON(w, http.StatusOK, types.TrialStatusResponse{
-		ID:        fmt.Sprint(t.ID),
-		Type:      t.Type,
-		Engine:    t.Engine,
-		State:     t.State,
-		ImageURL:  t.ResultURL,
-		SourceURL: t.SourceURL,
-		Scale:     t.Scale,
-		Sources:   store.UnmarshalSources(t.Sources),
-		ROI:       store.ROIFromCoords(t.Coords),
-		MS:        t.DurationMS,
-		Error:     t.Error,
+		ID:            fmt.Sprint(t.ID),
+		Type:          t.Type,
+		Engine:        t.Engine,
+		State:         t.State,
+		ImageURL:      t.ResultURL,
+		SourceURL:     t.SourceURL,
+		OutputImageID: imageIDFromPath(t.OutputFilename),
+		SourceImageID: imageIDFromPath(sourceFile),
+		Scale:         t.Scale,
+		Sources:       store.UnmarshalSources(t.Sources),
+		ROI:           store.ROIFromCoords(t.Coords),
+		MS:            t.DurationMS,
+		Error:         t.Error,
 	})
 }
 

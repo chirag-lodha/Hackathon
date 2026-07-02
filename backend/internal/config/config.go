@@ -53,6 +53,16 @@ type Config struct {
 	// SuperResScale is the upscale factor used by the model (e.g. 4 => 4x).
 	SuperResScale int
 
+	// ---- Upscayl (real super-resolution CLI) ----
+	// The built-in super-res engine shells out to the Upscayl binary. Paths are
+	// overridable so the same build runs where Upscayl is installed elsewhere.
+	// UpscaylBin: the upscayl-bin executable.
+	// UpscaylModels: the directory holding the .param/.bin model files (-m).
+	// UpscaylModel: the model name to run (-n).
+	UpscaylBin    string
+	UpscaylModels string
+	UpscaylModel  string
+
 	// DatabaseURL is the Postgres connection string (postgres://...). The dev
 	// default points at the docker-compose service (mapped to host :5433).
 	DatabaseURL string
@@ -107,6 +117,9 @@ func Load() *Config {
 		OutputsDir:    filepath.Join(dataDir, "outputs"),
 		FrontendDir:   getenv("LUMINA_FRONTEND_DIR", ""),
 		SuperResScale: getenvInt("LUMINA_SR_SCALE", 4),
+		UpscaylBin:    getenv("LUMINA_UPSCAYL_BIN", "/opt/Upscayl/resources/bin/upscayl-bin"),
+		UpscaylModels: getenv("LUMINA_UPSCAYL_MODELS", "/opt/Upscayl/resources/models"),
+		UpscaylModel:  getenv("LUMINA_UPSCAYL_MODEL", "upscayl-standard-4x"),
 		DatabaseURL:   getenv("DATABASE_URL", "postgres://lumina:lumina@localhost:5433/lumina?sslmode=disable"),
 		CameraAPIBase: getenv("LUMINA_CAMERA_API", ""),
 		CameraAuthKey: getenv("LUMINA_CAMERA_AUTHKEY", ""),

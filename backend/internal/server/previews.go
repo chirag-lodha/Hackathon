@@ -26,6 +26,17 @@ func imageRel(sessionID uint, imageID string) string {
 	return filepath.ToSlash(filepath.Join("sessions", strconv.FormatUint(uint64(sessionID), 10), "images", imageID+".jpeg"))
 }
 
+// imageIDFromPath recovers an image id from a stored image path
+// (sessions/<id>/images/<uuid>.<ext> -> <uuid>). Every image file is named by
+// its id, so the id is the base name without extension. Returns "" for empty.
+func imageIDFromPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	base := filepath.Base(p)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
 // saveImageBytes writes preview bytes to the session's image path.
 func (s *Server) saveImageBytes(sessionID uint, imageID string, b []byte) (string, error) {
 	rel := imageRel(sessionID, imageID)
@@ -198,14 +209,13 @@ func (s *Server) handleCameras(w http.ResponseWriter, r *http.Request) {
 	out := make([]types.Camera, 0, len(cams))
 	imgs := make(map[string]string, len(cams))
 	for _, cam := range cams {
-		id := store.NewUUID()
-		img := store.Image{ID: id, SessionID: sessionID, CameraESN: cam.ESN, Kind: "preview", State: store.StateProcessing}
-		if err := s.repo.CreateImage(&img); err != nil {
+		img, err := s.repo.CreateImage(&store.Image{SessionID: sessionID, CameraESN: cam.ESN, Kind: "preview", State: store.StateProcessing})
+		if err != nil {
 			continue
 		}
-		s.downloadPreviewAsync(img, authKey) // latest preview (EENTs empty)
-		out = append(out, types.Camera{ESN: cam.ESN, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: id})
-		imgs[cam.ESN] = id
+		s.downloadPreviewAsync(*img, authKey) // latest preview (EENTs empty)
+		out = append(out, types.Camera{ESN: cam.ESN, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: img.ID})
+		imgs[cam.ESN] = img.ID
 	}
 	writeJSON(w, http.StatusOK, types.CamerasResponse{Cameras: out, Images: imgs})
 }
@@ -259,24 +269,29 @@ func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
 				if !ok {
 					continue
 				}
-				id := store.NewUUID()
 				if shots != nil && shots[esn] != nil {
-					// Fresh compute — reuse the frame we already fetched.
-					rel, serr := s.saveImageBytes(sessionID, id, shots[esn].Bytes)
-					state := store.StateSuccess
-					if serr != nil {
-						state = store.StateFailure
-					}
-					_ = s.repo.CreateImage(&store.Image{ID: id, SessionID: sessionID, CameraESN: esn, EENTs: shots[esn].TS, Kind: "preview", State: state, Path: rel})
-				} else {
-					// Cache hit — download this camera's frame in the background.
-					img := store.Image{ID: id, SessionID: sessionID, CameraESN: esn, EENTs: req.AroundTs, Kind: "preview", State: store.StateProcessing}
-					if err := s.repo.CreateImage(&img); err != nil {
+					// Fresh compute — reuse the frame we already fetched. Create the
+					// row first (Postgres assigns the id), then write the bytes to the
+					// id-derived path and mark the row done.
+					img, err := s.repo.CreateImage(&store.Image{SessionID: sessionID, CameraESN: esn, EENTs: shots[esn].TS, Kind: "preview", State: store.StateProcessing})
+					if err != nil {
 						continue
 					}
-					s.downloadPreviewAsync(img, authKey)
+					if rel, serr := s.saveImageBytes(sessionID, img.ID, shots[esn].Bytes); serr == nil {
+						_ = s.repo.ImageDone(img.ID, rel, shots[esn].TS)
+					} else {
+						_ = s.repo.ImageFailed(img.ID, serr.Error())
+					}
+					out = append(out, types.Camera{ESN: esn, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: img.ID})
+				} else {
+					// Cache hit — download this camera's frame in the background.
+					img, err := s.repo.CreateImage(&store.Image{SessionID: sessionID, CameraESN: esn, EENTs: req.AroundTs, Kind: "preview", State: store.StateProcessing})
+					if err != nil {
+						continue
+					}
+					s.downloadPreviewAsync(*img, authKey)
+					out = append(out, types.Camera{ESN: esn, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: img.ID})
 				}
-				out = append(out, types.Camera{ESN: esn, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: id})
 			}
 			if len(out) > 0 {
 				writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out, GroupedBy: "scene"})
@@ -293,13 +308,12 @@ func (s *Server) handleLocationCameras(w http.ResponseWriter, r *http.Request) {
 		if !sameLocation && !isSelf {
 			continue
 		}
-		id := store.NewUUID()
-		img := store.Image{ID: id, SessionID: sessionID, CameraESN: cam.ESN, EENTs: req.AroundTs, Kind: "preview", State: store.StateProcessing}
-		if err := s.repo.CreateImage(&img); err != nil {
+		img, err := s.repo.CreateImage(&store.Image{SessionID: sessionID, CameraESN: cam.ESN, EENTs: req.AroundTs, Kind: "preview", State: store.StateProcessing})
+		if err != nil {
 			continue
 		}
-		s.downloadPreviewAsync(img, authKey)
-		out = append(out, types.Camera{ESN: cam.ESN, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: id})
+		s.downloadPreviewAsync(*img, authKey)
+		out = append(out, types.Camera{ESN: cam.ESN, Name: cam.Name, Location: cam.Location, Status: cam.Status, ImageID: img.ID})
 	}
 
 	writeJSON(w, http.StatusOK, types.LocationCamerasResponse{Location: location, Cameras: out, GroupedBy: "location"})
@@ -476,17 +490,22 @@ func (s *Server) handlePreviews(w http.ResponseWriter, r *http.Request) {
 	// store saves one fetched preview, records it as a SUCCESS image, and kicks
 	// off a Gemini caption for it.
 	store1 := func(p *brivo.Preview) types.Preview {
-		id := store.NewUUID()
-		rel, err := s.saveImageBytes(sessionID, id, p.Bytes)
-		state := store.StateSuccess
+		// Create the row first so Postgres assigns the id, then write the bytes to
+		// the id-derived path and finalize the row's state.
+		img, err := s.repo.CreateImage(&store.Image{SessionID: sessionID, CameraESN: req.CameraESN, EENTs: p.TS, Kind: "preview", State: store.StateProcessing})
 		if err != nil {
+			return types.Preview{Ts: p.TS, State: store.StateFailure}
+		}
+		rel, serr := s.saveImageBytes(sessionID, img.ID, p.Bytes)
+		state := store.StateSuccess
+		if serr != nil {
 			state = store.StateFailure
+			_ = s.repo.ImageFailed(img.ID, serr.Error())
+		} else {
+			_ = s.repo.ImageDone(img.ID, rel, p.TS)
+			s.captionAsync(img.ID, p.Bytes)
 		}
-		_ = s.repo.CreateImage(&store.Image{ID: id, SessionID: sessionID, CameraESN: req.CameraESN, EENTs: p.TS, Kind: "preview", State: state, Path: rel})
-		if state == store.StateSuccess {
-			s.captionAsync(id, p.Bytes)
-		}
-		return types.Preview{ImageID: id, Ts: p.TS, State: state}
+		return types.Preview{ImageID: img.ID, Ts: p.TS, State: state}
 	}
 
 	var previews []types.Preview

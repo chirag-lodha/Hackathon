@@ -1,23 +1,12 @@
 package store
 
 import (
-	"crypto/rand"
 	"encoding/json"
-	"fmt"
 
 	"gorm.io/gorm"
 
 	"lumina/internal/types"
 )
-
-// NewUUID returns a random UUIDv4 string (used as image ids).
-func NewUUID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
 
 // Repo is the data-access layer for trials.
 type Repo struct{ db *gorm.DB }
@@ -144,7 +133,14 @@ func (r *Repo) GetSession(id uint) (*Session, error) {
 
 // ---------- images (preview downloads) ----------
 
-func (r *Repo) CreateImage(img *Image) error { return r.db.Create(img).Error }
+// CreateImage inserts an image row and returns it with the Postgres-generated
+// id (and any other DB defaults) populated.
+func (r *Repo) CreateImage(img *Image) (*Image, error) {
+	if err := r.db.Create(img).Error; err != nil {
+		return nil, err
+	}
+	return img, nil
+}
 
 func (r *Repo) GetImage(id string) (*Image, error) {
 	var img Image

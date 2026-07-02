@@ -55,7 +55,7 @@ export async function superResolve(params, onState) {
     await new Promise((r) => setTimeout(r, 600))
     const t = await getTrial(submitted.id)
     onState?.(t.state)
-    if (t.state === 'SUCCESS') return t   // {type, imageUrl, sourceUrl, scale, roi, ms}
+    if (t.state === 'SUCCESS') return t   // {type, imageUrl, sourceUrl, outputImageId, sourceImageId, scale, roi, ms}
     if (t.state === 'FAILURE') throw new Error(t.error || 'Enhancement failed')
   }
   throw new Error('Timed out waiting for the enhancement')
